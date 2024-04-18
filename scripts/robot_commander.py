@@ -593,10 +593,7 @@ def main(args=None):
     
 
     add_to_navigation = [
-        
-        # Spin spins the robot in place for phi in radians. It doesn't orient it to phi.
-        ("spin", 3.14),
-        
+                
         # Starting point
         ("go", (0.0, 0.0, 0.57)),
 
