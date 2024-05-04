@@ -8,6 +8,26 @@ cost_scaling_factor (originalno 4.0)
 inflation_radius  (originalno 0.45)
 
 ## To do:
+
+- nardit v robotcommanderju subscriberja na te detectione in da se odziva na to in potuje
+- nardit za detectione da se ne ponavlja detection, če je na istem mestu.
+- text to speech
+
+- izboljšat ta opening in closing. Ali pa mogoče celo tresholding. Nekako je treba to držalno roko odrstranit brez da preveč deformiraš ring da bi bil zaznan.
+(Basically, nimamo težav s false positives, ampak ne dobimo teh ringov ffs)
+Kot kaže je ves problem ring detectiona v tej roki zraven, ker ko je lepo closed away, deluje super.
+
+- preverit če moje zaznavanje globine sredine sploh dela.
+Do sedaj ni problema s false detectioni flying kvadrov.
+Sprobati ta depth detection, da kakšne te blocke v zraku ne misidentifyamo.
+Moj depth checking ni prav preverjen, ker ga nisem mogel zganjat. Poglej, da nisem kje narobe obrnil koordinat slike.
+funkcijo get_depth...preveri
+
+Z zmanjšanje false positives ring detectiona (ne rabimo)
+- axis se med manjšim in večjim ne smejo za veliko razlikovat.
+
+
+
 - text to speech
 - detektiranje cilindrov (z barvo) robustifikacija, subscription, prependanje teh goalov
 - Detektiranje krogov (z barvo, pa ne flat krogov torej preverit depth na krogu in v sredini in videt če sta različna (pazi na infinities in take stvari ko v ozadju ni stene ampak air)), subscription, prependanje teh goalov - če je zelen, potem še prependanje goala servoing mehanizma
