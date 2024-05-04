@@ -5,7 +5,8 @@ from rclpy.node import Node
 import cv2
 import numpy as np
 import tf2_ros
-import math
+
+import random
 
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PointStamped, Vector3, Pose
@@ -153,6 +154,14 @@ class RingDetector(Node):
 
         ret, thresholded = cv2.threshold(thresholder, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
+
+
+        # The background and foreground are switched in the thresholded image
+        # Switch them back - only whis way morphologcal operations do what you expect.
+        thresholded = cv2.bitwise_not(thresholded)
+
+
+
         # Local tresholding
         # thresholded = cv2.adaptiveThreshold(thresholder, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 15, 30)
         
@@ -165,17 +174,50 @@ class RingDetector(Node):
 
 
 
+
+
+
         # Morphological operations on the image to
         # - get rid of the handle of the ring
         # - make the inner and outer contour of the ring more pronounced
-        kernel_size = (5, 5)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
+        
 
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        # thresh = cv2.erode(thresh, kernel, iterations=1)
+        # The holder has to be removed for a ring to be detected.
+        # At a large distance, making the size big enough for the holder to be removed, makes the ring not whole and it doesn't get detected anyway.
+        # So we need to prioritize closer detections with a larger size.
+        # So make the upper bound larger, because it small sizes are only useful for distant rings, where the detection doesn't happen anyway.
+        # And increse the maximum size so that the holder is eroded even when close.
+        # Although, the rings and holders seem to vary in size and so some rings require smaller kernels.
+
+        size = random.randint(4,12)
+        # size = 5
+        
+
+        kernel_size = (size, size)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, kernel_size) # cv2.MORPH_RECT
+
+        # New idea: it seems only the ring-end of the holder remains after closing.
+        # Solution: just close again. Or maybe add an opening. Or just an erosion.
+        
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        
+
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        thresh = cv2.erode(thresh, kernel, iterations=1)
+
+        # # Probably needs a smaller kernel.
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
         # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
 
+
+        # # Doesn't work, because it malforms the ring too much to stay an elipse:
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
 
 
