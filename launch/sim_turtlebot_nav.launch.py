@@ -24,7 +24,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
 
 pkg_dis_tutorial3 = get_package_share_directory('RINS-task-2')
-world_to_use = "task2_demo1"
+world_to_use = "demo2"
 
 
 ARGUMENTS = [
