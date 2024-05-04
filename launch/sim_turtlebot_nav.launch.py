@@ -24,6 +24,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
 
 pkg_dis_tutorial3 = get_package_share_directory('RINS-task-2')
+world_to_use = "task2_demo1"
 
 
 ARGUMENTS = [
@@ -31,7 +32,7 @@ ARGUMENTS = [
                           description='Robot namespace'),
     DeclareLaunchArgument('rviz', default_value='true',
                           choices=['true', 'false'], description='Start rviz.'),
-    DeclareLaunchArgument('world', default_value='task',
+    DeclareLaunchArgument('world', default_value=world_to_use,
                           description='Ignition World'),
     DeclareLaunchArgument('model', default_value='standard',
                           choices=['standard', 'lite'],

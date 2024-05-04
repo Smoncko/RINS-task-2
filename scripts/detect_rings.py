@@ -39,8 +39,19 @@ class RingDetector(Node):
         self.image_sub = self.create_subscription(Image, "/oakd/rgb/preview/image_raw", self.image_callback, 1)
         self.depth_sub = self.create_subscription(Image, "/oakd/rgb/preview/depth", self.depth_callback, 1)
 
+
+        # For publishing the markers
+        self.marker_topic = "/detected_rings"
+        self.marker_pub = self.create_publisher(Marker, self.marker_topic, QoSReliabilityPolicy.BEST_EFFORT)
+
         # Publiser for the visualization markers
         # self.marker_pub = self.create_publisher(Marker, "/ring", QoSReliabilityPolicy.BEST_EFFORT)
+
+
+
+
+        self.latest_depth_image = None
+
 
         # Object we use for transforming between coordinate frames
         # self.tf_buf = tf2_ros.Buffer()
@@ -51,6 +62,8 @@ class RingDetector(Node):
         cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)        
 
+
+
     def image_callback(self, data):
         self.get_logger().info(f"I got a new image! Will try to find rings...")
 
@@ -58,6 +71,10 @@ class RingDetector(Node):
             cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
         except CvBridgeError as e:
             print(e)
+
+
+        current_depth_image = self.latest_depth_image
+
 
         blue = cv_image[:,:,0]
         green = cv_image[:,:,1]
@@ -68,10 +85,11 @@ class RingDetector(Node):
         # gray = red
 
         # Apply Gaussian Blur
-        # gray = cv2.GaussianBlur(gray,(3,3),0)
+        gray = cv2.GaussianBlur(gray,(3,3),0)
 
         # Do histogram equalization
-        # gray = cv2.equalizeHist(gray)
+        gray = cv2.equalizeHist(gray)
+
 
         # Binarize the image, there are different ways to do it
         #ret, thresh = cv2.threshold(img, 50, 255, 0)
@@ -87,6 +105,7 @@ class RingDetector(Node):
         cv2.drawContours(gray, contours, -1, (255, 0, 0), 3)
         cv2.imshow("Detected contours", gray)
         cv2.waitKey(1)
+
 
         # Fit elipses to all extracted contours
         elps = []
@@ -173,12 +192,22 @@ class RingDetector(Node):
                 cv2.imshow("Detected rings",cv_image)
                 cv2.waitKey(1)
 
+
+
+
     def depth_callback(self,data):
 
         try:
             depth_image = self.bridge.imgmsg_to_cv2(data, "32FC1")
         except CvBridgeError as e:
             print(e)
+
+
+        self.latest_depth_image = depth_image
+        
+
+
+        # Visualization in OpenCV:
 
         depth_image[depth_image==np.inf] = 0
         
