@@ -1,6 +1,8 @@
 #include <iostream>
 #include <list>
 #include <cmath>
+#include <algorithm>
+#include <string>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/extract_indices.h>
@@ -146,7 +148,7 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     int num_inliers = (*inliers_cylinder).indices.size();
     float percent_inliers = (float)num_inliers / (float)num_points;
 
-    if(percent_inliers < 0.1) {
+    if(percent_inliers < 0.05) {
         return;
     }
 
@@ -249,9 +251,66 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     int g_avg = (int)((float)g_sum / (float)cloud_cylinder->points.size());
     int b_avg = (int)((float)b_sum / (float)cloud_cylinder->points.size());
 
-    std::cerr << "RGB: " << r_avg << " " << g_avg << " " << b_avg << std::endl;
+    int c_high = std::max(r_avg, std::max(g_avg, b_avg));
+    int c_low = std::min(r_avg, std::min(g_avg, b_avg));
+    int c_rng = c_high - c_low;
 
-    std::cerr << point_map.point.x << " " << point_map.point.y << " " << point_map.point.z << std::endl;
+    float r1 = (float)(c_high - r_avg) / (float)c_rng;
+    float g1 = (float)(c_high - g_avg) / (float)c_rng;
+    float b1 = (float)(c_high - b_avg) / (float)c_rng;
+
+    float h1;
+    if(r_avg == c_high) {
+        h1 = b1 - g1;
+    } else if(g_avg == c_high) {
+        h1 = r1 - b1 + 2.0;
+    } else if(b_avg == c_high) {
+        h1 = g1 - r1 + 4.0;
+    }
+
+    float h;
+    if(c_rng == 0) {
+        h = 0;
+    } else if(h1 < 0) {
+        h = (h1 + 6.0) / 6.0;
+    } else {
+        h = h1 / 6.0;
+    }
+
+    h = h * 360.0;
+
+    float s = 0.0;
+    if(c_high > 0) {
+        s = (float)c_rng / (float)c_high;
+    }
+
+    float v = (float)c_high / 255.0;
+
+    std::string color = "";
+    if(s < 0.15) {
+        return;
+    } else if(v < 0.1) {
+        color = "black";
+    } else if(h < 15 || h > 350) {
+        color = "red";
+    } else if(h > 20 && h < 65) {
+        if(s < 0.5) {
+            return;
+        }
+        color = "yellow";
+    } else if(h > 65 && h < 150) {
+        color = "green";
+    } else if(h > 180 && h < 265) {
+        color = "blue";
+    } else {
+        return;
+    }
+
+    std::cerr << "XYZ: " << point_map.point.x << " " << point_map.point.y << " " << point_map.point.z << std::endl;
+    std::cerr << "RGB: " << r_avg << " " << g_avg << " " << b_avg << std::endl;
+    std::cerr << "HSV: " << h << " " << s << " " << v << std::endl;
+    std::cerr << "Color: " << color << std::endl;
+
     detected_cylinders.push_back(point_map);
 
     // publish marker
@@ -277,9 +336,9 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.scale.y = 0.1;
     marker.scale.z = 0.1;
 
-    marker.color.r = (float)r_avg;
-    marker.color.g = (float)g_avg;
-    marker.color.b = (float)b_avg;
+    marker.color.r = (float)r_avg / 255.0;
+    marker.color.g = (float)g_avg / 255.0;
+    marker.color.b = (float)b_avg / 255.0;
     marker.color.a = 1.0f;
 
     marker_pub->publish(marker);
