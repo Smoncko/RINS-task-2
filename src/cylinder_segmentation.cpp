@@ -1,4 +1,6 @@
 #include <iostream>
+#include <list>
+#include <cmath>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/extract_indices.h>
@@ -34,9 +36,16 @@ typedef pcl::PointXYZ PointT;
 int marker_id = 0;
 float error_margin = 0.02;  // 2 cm margin for error
 float target_radius = 0.11;
-bool verbose = true;
+bool verbose = false;
+
+std::list<geometry_msgs::msg::PointStamped> detected_cylinders;
 
 // set up PCL RANSAC objects
+
+// Function to calculate distance
+double distance(double x1, double y1, double x2, double y2) {
+    return std::sqrt(std::pow((x2 - x1), 2) + std::pow((y2 - y1), 2));
+}
 
 void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     // save timestamp from message
@@ -211,6 +220,17 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         std::cerr << "point_map: " << point_map.point.x << " " << point_map.point.y << " " << point_map.point.z << std::endl;
     }
 
+    for(auto point: detected_cylinders) {
+        double dist = distance(point_map.point.x, point_map.point.y, point.point.x, point.point.y);
+
+        if(dist < 1) {
+            return;
+        }
+    }
+
+    std::cerr << point_map.point.x << " " << point_map.point.y << " " << point_map.point.z << std::endl;
+    detected_cylinders.push_back(point_map);
+
     // publish marker
     marker.header.frame_id = "map";
     marker.header.stamp = now;
@@ -239,10 +259,10 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.color.b = 0.0f;
     marker.color.a = 1.0f;
 
-    // marker.lifetime = rclcpp::Duration(1,0);
-    marker.lifetime = rclcpp::Duration(10, 0);
-
     marker_pub->publish(marker);
+
+    // marker.lifetime = rclcpp::Duration(1,0);
+    // marker.lifetime = rclcpp::Duration(10, 0);
 
     //////////////////////////// publish result point clouds /////////////////////////////////
 
