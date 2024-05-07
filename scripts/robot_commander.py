@@ -214,8 +214,6 @@ class RobotCommander(Node):
         
         self.info("Cylinder detected!")
 
-        cylinder_location = np.array([msg.pose.position.x, msg.pose.position.y])
-
         r = int(msg.color.r * 255)
         g = int(msg.color.g * 255)
         b = int(msg.color.b * 255)
@@ -268,13 +266,15 @@ class RobotCommander(Node):
         elif b == c_high:
             h1 = g1 - r1 + 4
 
-        h1 = 0
+        h = 0
         if c_rng == 0:
             h = 0
         elif h1 < 0:
             h = (h1 + 6) / 6
         else:
             h = h1 / 6
+
+        h = h * 360
 
         return h, s, v
 
@@ -640,6 +640,7 @@ class RobotCommander(Node):
 
         mp3_fp = BytesIO()
         tts = gTTS(color, lang="en")
+        tts.write_to_fp(mp3_fp)
         mp3_fp.seek(0)
 
         pygame.init()

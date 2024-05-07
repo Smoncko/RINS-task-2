@@ -148,7 +148,7 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     int num_inliers = (*inliers_cylinder).indices.size();
     float percent_inliers = (float)num_inliers / (float)num_points;
 
-    if(percent_inliers < 0.1) {
+    if(percent_inliers < 0.05) {
         return;
     }
 
@@ -294,6 +294,9 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     } else if(h < 15 || h > 350) {
         color = "red";
     } else if(h > 20 && h < 65) {
+        if(s < 0.5) {
+            return;
+        }
         color = "yellow";
     } else if(h > 65 && h < 150) {
         color = "green";
