@@ -31,7 +31,7 @@ std::shared_ptr<rclcpp::Node> node;
 std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
 std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
-typedef pcl::PointXYZ PointT;
+typedef pcl::PointXYZRGB PointT;
 
 int marker_id = 0;
 float error_margin = 0.02;  // 2 cm margin for error
@@ -228,6 +228,29 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         }
     }
 
+    int r_sum = 0;
+    int g_sum = 0;
+    int b_sum = 0;
+
+    for(int nIndex = 0; nIndex < (int)cloud_cylinder->points.size(); nIndex++) {
+
+        int r = cloud_cylinder->points[nIndex].r;
+        int g = cloud_cylinder->points[nIndex].g;
+        int b = cloud_cylinder->points[nIndex].b;
+
+        // std::cerr << r << " " << g << " " << b << std::endl;
+        
+	    r_sum = r_sum + r;
+	    g_sum = g_sum + g;
+	    b_sum = b_sum + b;
+    }
+
+    int r_avg = (int)((float)r_sum / (float)cloud_cylinder->points.size());
+    int g_avg = (int)((float)g_sum / (float)cloud_cylinder->points.size());
+    int b_avg = (int)((float)b_sum / (float)cloud_cylinder->points.size());
+
+    std::cerr << "RGB: " << r_avg << " " << g_avg << " " << b_avg << std::endl;
+
     std::cerr << point_map.point.x << " " << point_map.point.y << " " << point_map.point.z << std::endl;
     detected_cylinders.push_back(point_map);
 
@@ -254,9 +277,9 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.scale.y = 0.1;
     marker.scale.z = 0.1;
 
-    marker.color.r = 0.0f;
-    marker.color.g = 1.0f;
-    marker.color.b = 0.0f;
+    marker.color.r = (float)r_avg;
+    marker.color.g = (float)g_avg;
+    marker.color.b = (float)b_avg;
     marker.color.a = 1.0f;
 
     marker_pub->publish(marker);
@@ -291,7 +314,7 @@ int main(int argc, char** argv) {
     // create subscriber
     node->declare_parameter<std::string>("topic_pointcloud_in", "/oakd/rgb/preview/depth/points");
     std::string param_topic_pointcloud_in = node->get_parameter("topic_pointcloud_in").as_string();
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription = node->create_subscription<sensor_msgs::msg::PointCloud2>(param_topic_pointcloud_in, 10, &cloud_cb);
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pclSubscription = node->create_subscription<sensor_msgs::msg::PointCloud2>(param_topic_pointcloud_in, 10, &cloud_cb);
 
     // setup tf listener
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock());
