@@ -56,7 +56,9 @@ from playsound import playsound
 from pydub import AudioSegment
 from pydub.playback import play
 
-
+from gtts import gTTS
+from io import BytesIO
+import pygame
 
 
 class TaskResult(Enum):
@@ -562,6 +564,26 @@ class RobotCommander(Node):
     def say_hi(self):
         playsound("src/RINS-task-2/voice/zivjo.mp3")
         self.faces_greeted += 1
+    
+    def say_color(color: str):
+        mp3_fp = BytesIO()
+        tts = gTTS(color, lang="en")
+        mp3_fp.seek(0)
+
+        pygame.init()
+        pygame.mixer.init()
+        pygame.mixer.music.load(mp3_fp)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+        
+        #Če Pygame ne dela:
+        #tts.save("color.mp3")
+        #playsound("/color.mp3")
+
+        #Če Playsound ne dela:
+        #v = vlc.MediaPlayer("/color.mp3")
+        #v.play()
 
 
 def main(args=None):
