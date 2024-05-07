@@ -45,7 +45,9 @@ import numpy as np
 
 import math
 
-from ultralytics import YOLO
+
+
+from sensor_msgs.msg import CameraInfo
 
 
 
@@ -117,12 +119,21 @@ class RingDetector(Node):
 
         # Marker handling
 
+        # Get camera calibration to be able to get the 3D coordinates of the points in the image
+        self.camera_info = None
+        self.subscription = self.create_subscription(
+            CameraInfo,
+            #'/oakd_rgb_camera_optical_frame/camera_info',
+            '/oakd/rgb/preview/camera_info',
+            self.camera_info_callback,
+            10)
+
 
         # For listening and loading the 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        self.pointcloud_sub = self.create_subscription(PointCloud2, "/oakd/rgb/preview/depth/points", self.pointcloud_callback, qos_profile_sensor_data)
+        # self.pointcloud_sub = self.create_subscription(PointCloud2, "/oakd/rgb/preview/depth/points", self.pointcloud_callback, qos_profile_sensor_data)
 
         self.curr_markers = []
 
@@ -152,7 +163,65 @@ class RingDetector(Node):
 
 
 
+    def camera_info_callback(self, msg):
+            fx = msg.k[0]
+            fy = msg.k[4]
+            cx = msg.k[2]
+            cy = msg.k[5]
+            self.camera_info = (fx, fy, cx, cy)
+            # print(f"Camera Intrinsics: fx={fx}, fy={fy}, cx={cx}, cy={cy}")
+    
+    def camera_pixels_to_3d(self, x, y, depth):
 
+        if depth == float('inf'):
+            print("Depth is inf")
+            return None
+        
+        if depth < 0:
+            print("Depth is negative")
+            return None
+
+        if self.camera_info is None:
+            return None
+
+        fx, fy, cx, cy = self.camera_info
+        """
+        Convert depth and pixel coordinates to 3D point.
+        :param x: Pixel x coordinate
+        :param y: Pixel y coordinate
+        :param depth: Depth value at (x, y)
+        :param fx: Focal length in x
+        :param fy: Focal length in y
+        :param cx: Principal point x
+        :param cy: Principal point y
+        :return: (X, Y, Z) in camera coordinates
+        """
+
+        # I think this conversion wasn't necessary so it messed things up.
+        # Z = depth / 1000.0  # Convert mm to meters
+        Z = depth
+        X = (x - cx) * Z / fx
+        Y = (y - cy) * Z / fy
+        return (X, Y, Z)
+
+    def point_from_coordinates(self, point_tuple, frame_id, time_stamp):
+
+        x, y, z = point_tuple
+
+        # Create a PointStamped in the /base_link frame of the robot
+        # "Stamped" means that the message type contains a Header
+        
+        point_in_robot_frame = PointStamped()
+        point_in_robot_frame.header.frame_id = frame_id #"/base_link"
+        
+        # point_in_robot_frame.header.stamp = self.get_clock().now().to_msg()   # This was suggested by copilot. Caution.
+        point_in_robot_frame.header.stamp = time_stamp
+
+        point_in_robot_frame.point.x = float(x)
+        point_in_robot_frame.point.y = float(y)
+        point_in_robot_frame.point.z = float(z)
+
+        return point_in_robot_frame
 
 
     """
@@ -216,11 +285,6 @@ class RingDetector(Node):
 
 
 
-    def marker_append(self, marker_points_list):
-        self.curr_markers = []
-
-        for x, y in marker_points_list:
-            self.curr_markers.append((x,y))
 
 
 
@@ -259,66 +323,157 @@ class RingDetector(Node):
 
 
 
-    def publish_marker(self, point_in_robot_frame):
+    def publish_marker_from_point(self, point_in_robot_frame, transform):
+        
 
-        # Now we look up the transform between the base_link and the map frames
-        # and then we apply it to our PointStamped
-        time_now = rclpy.time.Time()
-        timeout = Duration(seconds=0.1)
-        try:
-            # An example of how you can get a transform from /base_link frame to the /map frame
-            # as it is at time_now, wait for timeout for it to become available
-            trans = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
-            #self.get_logger().info(f"Looks like the transform is available.")
+        # # Now we look up the transform between the base_link and the map frames
+        # # and then we apply it to our PointStamped
+        # time_now = rclpy.time.Time()
+        # timeout = Duration(seconds=0.1)
+        # try:
+        #     # An example of how you can get a transform from /base_link frame to the /map frame
+        #     # as it is at time_now, wait for timeout for it to become available
+        #     trans = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
+        #     #self.get_logger().info(f"Looks like the transform is available.")
+        
+        # except TransformException as te:
+        #     self.get_logger().info(f"Could not get the transform: {te}")
+        #     return
+        
+        trans = transform
 
-            # Now we apply the transform to transform the point_in_robot_frame to the map frame
-            # The header in the result will be copied from the Header of the transform
-            point_in_map_frame = tfg.do_transform_point(point_in_robot_frame, trans)
-            #self.get_logger().info(f"We transformed a PointStamped!")
 
-            # If the transformation exists, create a marker from the point, in order to visualize it in Rviz
-            marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id)
 
-            # if not math.isnan(marker_in_map_frame.pose.position.x) and not math.isnan(marker_in_map_frame.pose.position.y) and self.new(marker_in_map_frame):
 
-            if math.isnan(marker_in_map_frame.pose.position.x) or math.isnan(marker_in_map_frame.pose.position.y):
+        # Now we apply the transform to transform the point_in_robot_frame to the map frame
+        # The header in the result will be copied from the Header of the transform
+        point_in_map_frame = tfg.do_transform_point(point_in_robot_frame, trans)
+        #self.get_logger().info(f"We transformed a PointStamped!")
+
+        # If the transformation exists, create a marker from the point, in order to visualize it in Rviz
+        marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id)
+
+        # if not math.isnan(marker_in_map_frame.pose.position.x) and not math.isnan(marker_in_map_frame.pose.position.y) and self.new(marker_in_map_frame):
+
+        if math.isnan(marker_in_map_frame.pose.position.x) or math.isnan(marker_in_map_frame.pose.position.y):
+            return
+        
+        if not self.new(marker_in_map_frame):
+            return
+        
+
+        if self.CHECK_FALSE_POSITIVES:
+            # check if marker already detected
+            if self.notFalsePositive(marker_in_map_frame):
                 return
-            
-            if not self.new(marker_in_map_frame):
-                return
-            
-
-            if self.CHECK_FALSE_POSITIVES:
-                # check if marker already detected
-                if self.notFalsePositive(marker_in_map_frame):
-                    return
 
 
 
-            # if it's new, append it to detected markers
-            self.detected_markers.append(marker_in_map_frame)
+        # if it's new, append it to detected markers
+        self.detected_markers.append(marker_in_map_frame)
 
-            # Publish the marker
-            self.marker_pub.publish(marker_in_map_frame)
-            self.get_logger().info(f"The marker has been published to {self.marker_topic}. You are able to visualize it in Rviz")
-            #self.get_logger().info(f"x: {marker_in_map_frame.pose.position.x}, y: {marker_in_map_frame.pose.position.y}, z: {marker_in_map_frame.pose.position.z}")
-            
-            for curr_marker in self.detected_markers:
-                self.get_logger().info(f"x: {curr_marker.pose.position.x}, y: {curr_marker.pose.position.y}, z: {curr_marker.pose.position.z}")
+        # Publish the marker
+        self.marker_pub.publish(marker_in_map_frame)
+        self.get_logger().info(f"The marker has been published to {self.marker_topic}. You are able to visualize it in Rviz")
+        #self.get_logger().info(f"x: {marker_in_map_frame.pose.position.x}, y: {marker_in_map_frame.pose.position.y}, z: {marker_in_map_frame.pose.position.z}")
+        
+        for curr_marker in self.detected_markers:
+            self.get_logger().info(f"x: {curr_marker.pose.position.x}, y: {curr_marker.pose.position.y}, z: {curr_marker.pose.position.z}")
 
-            # Increase the marker_id, so we dont overwrite the same marker.
-            self.marker_id += 1
+        # Increase the marker_id, so we dont overwrite the same marker.
+        self.marker_id += 1
 
         #else:
             #self.get_logger().info(f"marker has already been detected")
 
-        except TransformException as te:
-            self.get_logger().info(f"Could not get the transform: {te}")
 
 
+    def publish_marker(self, x, y, z, time_stamp, transform):
+
+        # Create a PointStamped in the /base_link frame of the robot
+        # "Stamped" means that the message type contains a Header
+        
+        point_in_robot_frame = PointStamped()
+        point_in_robot_frame.header.frame_id = "/base_link"
+        
+        # point_in_robot_frame.header.stamp = self.get_clock().now().to_msg()   # This was suggested by copilot. Caution.
+        point_in_robot_frame.header.stamp = time_stamp
+
+        point_in_robot_frame.point.x = float(x)
+        point_in_robot_frame.point.y = float(y)
+        point_in_robot_frame.point.z = float(z)
+
+        self.publish_marker_from_point(point_in_robot_frame, transform)
+
+
+
+
+    """
+    THIS ISNT FINISHED YET.
+    I DIDNT THIN IT WOULD WORK.
+    BUT SOME WORK HAS BEEN DONE AND IT COULD HELP IN THE FUTURE."""
+
+
+    """
+    
+    def marker_append(self, marker_points_list):
+        self.curr_markers = []
+
+        for x, y in marker_points_list:
+            self.curr_markers.append((x,y))
+    """
+
+
+    """
+    # def pointcloud_callback(self, data):
+
+    #     # print("pointcloud_callback!")
+
+    #     # get point cloud attributes
+    #     height = data.height
+    #     width = data.width
+    #     point_step = data.point_step
+    #     row_step = data.row_step		
+
+    #     # iterate over marker coordinates
+    #     for x,y in self.curr_markers:
+
+    #         # get 3-channel representation of the poitn cloud in numpy format
+    #         a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
+    #         a = a.reshape((height,width,3))
+
+    #         # read center coordinates
+    #         d = a[y,x,:]
+
+
+    #         # Create a PointStamped in the /base_link frame of the robot
+    #         # "Stamped" means that the message type contains a Header
+    #         point_in_robot_frame = PointStamped()
+    #         point_in_robot_frame.header.frame_id = "/base_link"
+    #         point_in_robot_frame.header.stamp = data.header.stamp
+
+    #         point_in_robot_frame.point.x = float(d[0])
+    #         point_in_robot_frame.point.y = float(d[1])
+    #         point_in_robot_frame.point.z = float(d[2])
+
+    #         self.publish_marker(point_in_robot_frame)
+
+
+
+
+
+    # Managing a pointcloud
 
     def pointcloud_callback(self, data):
+            
+        return
+            
+        self.latest_point_cloud = data
 
+
+    def manage_pointcloud(self, pointcloud_at_that_time, curr_markers):
+        
+        data = pointcloud_at_that_time
         # print("pointcloud_callback!")
 
         # get point cloud attributes
@@ -327,12 +482,15 @@ class RingDetector(Node):
         point_step = data.point_step
         row_step = data.row_step		
 
-        # iterate over marker coordinates
-        for x,y in self.curr_markers:
 
-            # get 3-channel representation of the poitn cloud in numpy format
-            a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
-            a = a.reshape((height,width,3))
+        # get 3-channel representation of the poitn cloud in numpy format
+        a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
+        a = a.reshape((height,width,3))
+
+        # iterate over marker coordinates
+        # for x,y in self.curr_markers:
+        for x,y in curr_markers:
+
 
             # read center coordinates
             d = a[y,x,:]
@@ -351,7 +509,7 @@ class RingDetector(Node):
             self.publish_marker(point_in_robot_frame)
 
 
-
+    """
 
 
 
@@ -418,6 +576,30 @@ class RingDetector(Node):
         return depth_img[y, x]
 
 
+    def get_mean_depths_from_bounding_boxes(self, current_depth_image, thresh, rough_bounding_boxes):
+
+        # We are skipping this optimizetion for now
+        # depth_img = current_depth_image * thresh
+        depth_img = current_depth_image
+
+
+        depths = []
+
+        for box in rough_bounding_boxes:
+            x, y, major_ax = box
+    
+            depth_img_vec = depth_img[y-major_ax:y+major_ax, x-major_ax:x+major_ax].reshape((-1))
+
+            finite_arr = depth_img_vec[np.isfinite(depth_img_vec)]
+
+            if finite_arr.size == 0:
+                depths.append(None)
+                continue
+            mean = np.mean(finite_arr)
+
+            depths.append(mean)
+        
+        return depths
 
 
     def elipse_check(self, thresholded_img, gray_img, current_depth_image, cv_image):
@@ -577,7 +759,7 @@ class RingDetector(Node):
 
 
 
-                candidates.append([e1,e2])
+                candidates.append([le,se])
 
                 # print("gray.shape")
                 # print(gray.shape)
@@ -650,6 +832,54 @@ class RingDetector(Node):
 
     def image_callback(self, data):
         # self.get_logger().info(f"I got a new image! Will try to find rings...")
+        
+        current_depth_image = self.latest_depth_image
+
+
+        # Now we look up the transform between the base_link and the map frames
+        # and then we apply it to our PointStamped
+
+        time_stamp = data.header.stamp
+        
+        time_now = rclpy.time.Time()
+        timeout = Duration(seconds=0.1)
+        try:
+            # An example of how you can get a transform from /base_link frame to the /map frame
+            # as it is at time_now, wait for timeout for it to become available
+            robot_frame_to_map_transform = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
+            #self.get_logger().info(f"Looks like the transform is available.")
+        
+        except TransformException as te:
+            self.get_logger().info(f"Could not get the transform: {te}")
+            return
+
+
+
+        # from ros2 run tf2_tools view_frames
+        # oakd_rgb_camera_optical_frame: \n  parent: 'oakd_rgb_camera_frame
+
+
+        # I think oakd_rgb_camera_optical_frame doesn't take pixels.
+        # I think it is just set in the optical center of the camera - the 0,0 of the lens.
+        # While oakd_rgb_camera_frame is in the center of the camera or sth.
+
+
+        timeout = Duration(seconds=0.1)
+        try:
+            # An example of how you can get a transform from /base_link frame to the /map frame
+            # as it is at time_now, wait for timeout for it to become available
+            camera_to_robot_frame_transform = self.tf_buffer.lookup_transform("base_link", "oakd_rgb_camera_optical_frame", time_now, timeout)
+            #self.get_logger().info(f"Looks like the transform is available.")
+        
+        except TransformException as te:
+            self.get_logger().info(f"Could not get the transform: {te}")
+            return
+
+
+
+
+
+
 
         try:
             cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
@@ -657,7 +887,6 @@ class RingDetector(Node):
             print(e)
 
 
-        current_depth_image = self.latest_depth_image
 
         blue = cv_image[:,:,0]
         green = cv_image[:,:,1]
@@ -803,13 +1032,61 @@ class RingDetector(Node):
             elipse_candidates = self.elipse_check(thresh, gray, current_depth_image, cv_image)
         
 
-        # An elipse candidate is of the form ((first_elipse_center_x, first_elipse_center_y), (first_elipse_major_axis, first_elipse_minor_axis), first_elipse_angle)
-        # So we get the centres of the first elipse and pass that tuple, as is needed.
-        centres = [e[0][0] for e in elipse_candidates]
+        # An elipse candidate is of the form:
+        # (((first_elipse_center_x, first_elipse_center_y), (bbox_width?, bbox_height?), first_elipse_angle),
+        # ((second_elipse_center_x, second_elipse_center_y), (bbox_width?, bbox_height?), second_elipse_angle))
+
+        # Where the first elipse is the larger one.
+
+        # So we get the centres of the  elipse and pass that tuple, as is needed.
+        # centres = [e[0][0] for e in elipse_candidates]
         # But the coordinates are floats, but we need to floor them to integers
         # so we know what pixel to look at in the depth image.
-        centres = [(int(a), int(b)) for a,b in centres]
-        self.marker_append(centres)
+        # centres = [(int(a), int(b)) for a,b in centres]
+
+
+        # We do all of this just for the larger elipses.
+        centres = []
+        rough_bounding_boxes = []
+        for candidate in elipse_candidates:
+            
+            x = int(candidate[0][0][0])
+            y = int(candidate[0][0][1])
+
+
+            dim1 = int(candidate[0][1][0])
+            dim2 = int(candidate[0][1][1])
+
+            larger_dim = max(dim1, dim2)
+            
+            centres.append((x, y))
+            # centres.append(candidate[])
+            rough_bounding_boxes.append((x, y, larger_dim))
+
+        mean_depths = self.get_mean_depths_from_bounding_boxes(current_depth_image, thresh, rough_bounding_boxes)
+
+        # print("mean_depths")
+        # print(mean_depths)
+        
+
+        
+        for ix, depth in enumerate(mean_depths):
+
+            if depth == None:
+                continue
+
+            coordinates_3d = self.camera_pixels_to_3d(centres[ix][0], centres[ix][1], depth)
+            if coordinates_3d is None:
+                continue
+
+            point_in_camera_frame = self.point_from_coordinates(coordinates_3d, "oakd_rgb_camera_optical_frame", time_stamp)
+            point_in_robot_frame = tfg.do_transform_point(point_in_camera_frame, camera_to_robot_frame_transform)
+
+            # print(f"Depth at centre: {depth}")
+
+            self.publish_marker_from_point(point_in_robot_frame, robot_frame_to_map_transform)
+
+
 
 
 
@@ -819,16 +1096,37 @@ class RingDetector(Node):
 
     def depth_callback(self,data):
 
+        # print("data")
+        # print(data.header)
+        # print(data.encoding)
+        # print(data.height)
+        # print(data.width)
+        # print(data.step)
+        # print(data.is_bigendian)
+
+        # input("wait")
+        
+        # print(data)
+
+        # input("wait")
+
+        # print(data.data)
+
+        # print(5*"\n")
+
         try:
             depth_image = self.bridge.imgmsg_to_cv2(data, "32FC1")
         except CvBridgeError as e:
             print(e)
 
+        
+        # print(depth_image.shape)
+        # input("wait")
 
-        self.latest_depth_image = depth_image
+
+        self.latest_depth_image = depth_image.copy()
 
         # Visualization in OpenCV:
-
         depth_image[depth_image==np.inf] = 0
         
         # Do the necessairy conversion so we can visuzalize it in OpenCV
