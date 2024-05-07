@@ -150,6 +150,9 @@ class RingDetector(Node):
         self.detected_markers = []
 
 
+        self.color_diff_treshold = 30
+
+
 
 
     
@@ -289,7 +292,7 @@ class RingDetector(Node):
 
 
 
-    def create_marker(self, point_stamped, marker_id):
+    def create_marker(self, point_stamped, marker_id, color=(0.0, 0.0, 0.0)):
         """You can see the description of the Marker message here: https://docs.ros2.org/galactic/api/visualization_msgs/msg/Marker.html"""
 
         # create marker from PointStamped
@@ -309,9 +312,9 @@ class RingDetector(Node):
         marker.scale.z = scale
 
         # Set the color
-        marker.color.r = 1.0
-        marker.color.g = 0.0
-        marker.color.b = 0.0
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
         marker.color.a = 1.0
 
         # Set the pose of the marker
@@ -323,7 +326,7 @@ class RingDetector(Node):
 
 
 
-    def publish_marker_from_point(self, point_in_robot_frame, transform):
+    def publish_marker_from_point(self, point_in_robot_frame, transform, color=(0.0, 0.0, 0.0)):
         
 
         # # Now we look up the transform between the base_link and the map frames
@@ -351,7 +354,7 @@ class RingDetector(Node):
         #self.get_logger().info(f"We transformed a PointStamped!")
 
         # If the transformation exists, create a marker from the point, in order to visualize it in Rviz
-        marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id)
+        marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id, color)
 
         # if not math.isnan(marker_in_map_frame.pose.position.x) and not math.isnan(marker_in_map_frame.pose.position.y) and self.new(marker_in_map_frame):
 
@@ -388,7 +391,7 @@ class RingDetector(Node):
 
 
 
-    def publish_marker(self, x, y, z, time_stamp, transform):
+    def publish_marker(self, x, y, z, time_stamp, transform, color=(0.0, 0.0, 0.0)):
 
         # Create a PointStamped in the /base_link frame of the robot
         # "Stamped" means that the message type contains a Header
@@ -403,7 +406,7 @@ class RingDetector(Node):
         point_in_robot_frame.point.y = float(y)
         point_in_robot_frame.point.z = float(z)
 
-        self.publish_marker_from_point(point_in_robot_frame, transform)
+        self.publish_marker_from_point(point_in_robot_frame, transform, color)
 
 
 
@@ -524,8 +527,92 @@ class RingDetector(Node):
 
 
 
+    def get_decimal_rgb_from_bounding_boxes_of_BGR(self, cv_image, rough_bounding_boxes, thresh):
+
+        # print("np.max(thresh)")
+        # print(np.max(thresh))
+
+        img = cv_image.copy()
 
 
+
+
+        # cv2.imshow("Color before tresh", img)
+        # cv2.waitKey(1)
+
+        for i in range(3):
+            img[:,:,i] = img[:,:,i] * thresh
+        
+
+
+        # cv2.imshow("Color after tresh", img)
+        # cv2.waitKey(1)
+
+
+        diff_sum = np.zeros((img.shape[0], img.shape[1]))
+
+        # They were all green markers, just different shades.
+        # Probably because grey values were in there too much.
+
+        for i in range(3):
+            for j in range(i, 3):
+                diff_sum += np.abs(img[:,:,i] - img[:,:,j])
+
+        # cv2.imshow("Diff_sum", diff_sum)
+        # cv2.waitKey(1)
+        
+
+        enough_diff = diff_sum > self.color_diff_treshold
+
+        for i in range(3):
+            img[:,:,i] = img[:,:,i] * enough_diff
+        
+
+        # cv2.imshow("Color after diff_sum", img)
+        # cv2.waitKey(1)
+
+        
+        
+
+
+
+        rgb_values = []
+
+        for box in rough_bounding_boxes:
+            
+
+            x, y, major_ax = box
+
+            # print("x, y, major_ax")
+            # print(x, y, major_ax)
+
+            curr_img = img[y-major_ax:y+major_ax, x-major_ax:x+major_ax, :]
+
+            cv2.imshow("Color after bbox", curr_img)
+            cv2.waitKey(1)
+
+            colors = []
+
+            for i in range(3):
+                color_vec = curr_img[:,:,i]
+                color_vec = color_vec.reshape(-1)
+                # print("color_vec")
+                # print(color_vec)
+                color_vec = color_vec[color_vec > 10]
+                # print("color_vec")
+                # print(color_vec)
+                mean = np.mean(color_vec) / 255
+                if np.isnan(mean) or np.isinf(mean):
+                    mean = 0.0
+                colors.append(mean)
+
+            blue_mean = colors[0]
+            green_mean = colors[1]
+            red_mean = colors[2]
+
+            rgb_values.append((red_mean, green_mean, blue_mean))
+
+        return rgb_values
 
 
     def get_axis_tips_from_elipse(self, elipse):
@@ -871,6 +958,8 @@ class RingDetector(Node):
     def image_callback(self, data):
         # self.get_logger().info(f"I got a new image! Will try to find rings...")
         
+
+
         current_depth_image = self.latest_depth_image
 
 
@@ -926,9 +1015,14 @@ class RingDetector(Node):
 
 
 
-        blue = cv_image[:,:,0]
-        green = cv_image[:,:,1]
-        red = cv_image[:,:,2]
+        # blue = cv_image[:,:,0]
+        # green = cv_image[:,:,1]
+        # red = cv_image[:,:,2]
+
+
+
+        # Otherwise the green elipses added for imshow are added to the image and it messes up color detection.
+        curr_color_img = cv_image.copy()
 
 
 
@@ -1105,6 +1199,12 @@ class RingDetector(Node):
 
         # print("mean_depths")
         # print(mean_depths)
+
+        binary_thresh = thresh.copy()
+        binary_thresh[binary_thresh>0] = 1
+
+        # watch out for BGR
+        colors = self.get_decimal_rgb_from_bounding_boxes_of_BGR(curr_color_img, rough_bounding_boxes, binary_thresh)
         
 
         
@@ -1122,7 +1222,7 @@ class RingDetector(Node):
 
             # print(f"Depth at centre: {depth}")
 
-            self.publish_marker_from_point(point_in_robot_frame, robot_frame_to_map_transform)
+            self.publish_marker_from_point(point_in_robot_frame, robot_frame_to_map_transform, colors[ix])
 
 
 
