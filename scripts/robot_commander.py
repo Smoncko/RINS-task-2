@@ -134,6 +134,7 @@ class RobotCommander(Node):
         
 
         self.face_sub = self.create_subscription(Marker, "/detected_faces", self.face_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        self.face_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
 
         # ROS2 publishers
@@ -209,9 +210,73 @@ class RobotCommander(Node):
         self.cancel_goal = True
         # self.cancelTask()
 
+    def cylinder_detected_callback(self, msg):
+        
+        self.info("Cylinder detected!")
 
+        cylinder_location = np.array([msg.pose.position.x, msg.pose.position.y])
 
+        r = int(msg.color.r * 255)
+        g = int(msg.color.g * 255)
+        b = int(msg.color.b * 255)
 
+        h, s, v = self.rgb2hsv(r, g, b)
+
+        color = ""
+        if(v < 0.1):
+            color = "black"
+        elif h < 15 or h > 350:
+            color = "red"
+        elif h > 20 and h < 65:
+            color = "yellow"
+        elif h > 65 and h < 150:
+            color = "green"
+        elif h > 180 and h < 265:
+            color = "blue"
+
+        add_to_navigation = [
+            ("say_color", color),
+            self.last_destination_goal
+        ]
+
+        self.prepend_to_nav_list(add_to_navigation, spin_full_after_go=False)
+
+        self.cancel_goal = True
+        # self.cancelTask()
+
+    def rgb2hsv(self, r, g, b):
+
+        c_high = max(r, max(g, b))
+        c_low = min(r, min(g, b))
+        c_rng = c_high - c_low
+
+        s = 0
+        if c_high > 0:
+            s = c_rng / c_high
+
+        v = c_high / 255
+
+        r1 = (c_high - r) / c_rng
+        g1 = (c_high - g) / c_rng
+        b1 = (c_high - b) / c_rng
+
+        h1 = 0
+        if r == c_high:
+            h1 = b1 - g1
+        elif g == c_high:
+            h1 = r1 - b1 + 2
+        elif b == c_high:
+            h1 = g1 - r1 + 4
+
+        h1 = 0
+        if c_rng == 0:
+            h = 0
+        elif h1 < 0:
+            h = (h1 + 6) / 6
+        else:
+            h = h1 / 6
+
+        return h, s, v
 
     def map_callback(self, msg):
             self.get_logger().info(f"Read a new Map (Occupancy grid) from the topic.")
@@ -547,6 +612,8 @@ class RobotCommander(Node):
                 self.navigation_list.append(("spin", tup[1], None))
             elif tup[0] == "say_hi":
                 self.navigation_list.append(("say_hi", None, None))
+            elif tup[0] == "say_color":
+                self.navigation_list.append(("say_color", tup[1], None))
 
 
     def prepend_to_nav_list(self, to_add_list, spin_full_after_go=False):
@@ -560,12 +627,17 @@ class RobotCommander(Node):
                 self.navigation_list.insert(0, ("spin", tup[1], None))
             elif tup[0] == "say_hi":
                 self.navigation_list.insert(0, ("say_hi", None, None))
+            elif tup[0] == "say_color":
+                self.navigation_list.insert(0, ("say_color", tup[1], None))
 
     def say_hi(self):
         playsound("src/RINS-task-2/voice/zivjo.mp3")
         self.faces_greeted += 1
     
-    def say_color(color: str):
+    def say_color(self, color: str):
+        
+        self.info(color)
+
         mp3_fp = BytesIO()
         tts = gTTS(color, lang="en")
         mp3_fp.seek(0)
@@ -707,6 +779,9 @@ def main(args=None):
             rc.say_hi()
             if rc.faces_greeted == 3:
                 break
+        
+        elif curr_type == "say_color":
+            rc.say_color(curr_goal)
         
 
         del rc.navigation_list[0]
