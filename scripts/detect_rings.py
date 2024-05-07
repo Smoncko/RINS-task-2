@@ -146,7 +146,7 @@ class RingDetector(Node):
 
         # for unique markers
         self.marker_id = 0
-        self.min_distance_between_markers = 1.
+        self.min_distance_between_markers = 2.
         self.detected_markers = []
 
 
@@ -576,11 +576,13 @@ class RingDetector(Node):
         return depth_img[y, x]
 
 
-    def get_mean_depths_from_bounding_boxes(self, current_depth_image, thresh, rough_bounding_boxes):
+    def get_mean_depths_from_bounding_boxes(self, current_depth_image, rough_bounding_boxes, thresh=None):
 
         # We are skipping this optimizetion for now
-        # depth_img = current_depth_image * thresh
-        depth_img = current_depth_image
+        if thresh is not None:
+            depth_img = current_depth_image * thresh
+        else:
+            depth_img = current_depth_image
 
 
         depths = []
@@ -635,8 +637,8 @@ class RingDetector(Node):
         MAX_ANGLE_DIFF_TRESHOLD = 20
         MAX_MAJOR_MINOR_BORDER_DIFF_TRESHOLD = 4
 
-        USE_DEPTH_DIFF = False
-        MIN_DEPTH_DIFF_TRESHOLD = 5
+        USE_DEPTH_DIFF = True
+        MIN_DEPTH_DIFF_RELATIVE_TRESHOLD = 0.4
 
         # Find two elipses with same centers
         candidates = []
@@ -706,15 +708,51 @@ class RingDetector(Node):
 
 
 
+                if USE_DEPTH_DIFF:
+                    
+                    if current_depth_image is None:
+                        continue
+                    
 
+                    x = int(le[0][0])
+                    y = int(le[0][1])
+
+
+                    dim1 = int(le[1][0])
+                    dim2 = int(le[1][1])
+
+                    larger_dim = max(dim1, dim2)
+
+                    bbox_envelop = (x, y, larger_dim)
+                    bbox_centre = (x, y, 1) # 3x3 in the centre
+                    envelop_mean_depth, centre_mean_depth = self.get_mean_depths_from_bounding_boxes(current_depth_image, [bbox_envelop, bbox_centre])
+
+                    if envelop_mean_depth is None:
+                        continue
+
+                    if centre_mean_depth is None:
+                        pass
+                    else:
+                        if (np.abs(envelop_mean_depth - centre_mean_depth) / envelop_mean_depth) < MIN_DEPTH_DIFF_RELATIVE_TRESHOLD:
+                            continue
+
+                    
+
+
+
+
+
+                """
+                # Old way of doing it.
+                # Not tested.
 
                 if USE_DEPTH_DIFF:
 
-                    """"
-                    Test if the centre of a ring is at aprox the same distance as the ring.
-                    If it is, it's not a ring, but a picture of it.
-                    Watch out for infinite values, which might happen in a ring.
-                    """
+                    
+                    # Test if the centre of a ring is at aprox the same distance as the ring.
+                    # If it is, it's not a ring, but a picture of it.
+                    # Watch out for infinite values, which might happen in a ring.
+                    
 
                     # If we haven't gotten the depth image yet, we simply skip eliminate this as a possibility.
                     if current_depth_image is None:
@@ -749,7 +787,7 @@ class RingDetector(Node):
                     else:
                         if np.abs(avg_sample_depth - avg_centre_depth) < MIN_DEPTH_DIFF_TRESHOLD:
                             continue
-
+                """
 
                     
 
@@ -1063,7 +1101,7 @@ class RingDetector(Node):
             # centres.append(candidate[])
             rough_bounding_boxes.append((x, y, larger_dim))
 
-        mean_depths = self.get_mean_depths_from_bounding_boxes(current_depth_image, thresh, rough_bounding_boxes)
+        mean_depths = self.get_mean_depths_from_bounding_boxes(current_depth_image, rough_bounding_boxes)
 
         # print("mean_depths")
         # print(mean_depths)
