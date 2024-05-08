@@ -663,7 +663,7 @@ class RobotCommander(Node):
             if tup[0] == "go":
                 self.navigation_list.append(("go", self.get_pose_obj(*tup[1]), tup[1]))
                 if spin_full_after_go:
-                    self.navigation_list.append(("spin", 3.14, None))
+                    self.navigation_list.append(("spin", 6.28, None))
             elif tup[0] == "spin":
                 self.navigation_list.append(("spin", tup[1], None))
             elif tup[0] == "say_hi":
@@ -678,7 +678,7 @@ class RobotCommander(Node):
             if tup[0] == "go":
                 self.navigation_list.insert(0, ("go", self.get_pose_obj(*tup[1]), tup[1]))
                 if spin_full_after_go:
-                    self.navigation_list.insert(0, ("spin", 3.14, None))
+                    self.navigation_list.insert(0, ("spin", 6.28, None))
             elif tup[0] == "spin":
                 self.navigation_list.insert(0, ("spin", tup[1], None))
             elif tup[0] == "say_hi":
@@ -755,276 +755,31 @@ def main(args=None):
 
     add_to_navigation = [
 
+        ("go", (-0.65, 0., DOWN)),
 
+        ("go", (1.1, -2., UP)),
 
+        ("go", (3.5, -1.3, DOWN)),
 
+        ("go", (2.8, -0.8, LEFT)),
 
+        ("go", (2.35, 1.35, RIGHT)),
 
+        ("go", (1.6, 0., DOWN)),
 
-        # Middle down
+        ("go", (0.95, 1.75, DOWN)),
 
-        # lower-left block, upper
-        ("go", (-0.72, 0.9, LEFT)),
+        ("go", (-1.08, 0.92, DOWN)),
 
-        # lower block, left
-        ("go", (-0.72, 0.9, DOWN)),
+        ("go", (-1.35, 3.35, RIGHT)),
 
-        # lower block, right
-        ("go", (-0.2, -0.1, DOWN)),
+        ("go", (0.5, 3.2, UP)),
 
-        # mid block, lower
-        ("go", (-0.53, -0.19, LEFT)),
-
-
-
-        # Right up
-
-        # right-mid block, right gets done on the way
-
-        # upper block, left
-        ("go", (1.42, -1.8, UP)),
-
-        # upper block, upper
-        ("go", (3.11, -0.57, RIGHT)),
-
-        # UP-mid block, left
-        ("go", (3.11, -0.57, DOWN)),
-
-        # upper block, lower
-        ("go", (2.42, -0.5, RIGHT)),
-
-        # mid-up block, upper
-        ("go", (2.0, -0.4, LEFT)),
-
-
-
-        # Mid up
-
-        # mid-up block, lower
-        ("go", (1.21, 0.0, LEFT)),
-
-        # right-mid block, lower
-        ("go", (1.21, 0.0, RIGHT)),
-
-        # right-mid block, upper
-        ("go", (1.9, 0.42, RIGHT)),
-
-        # mid-up block, right
-        ("go", (2.73, 0.6, DOWN)),
-
-        # mid-up block, left
-        ("go", (2.73, 1.66, DOWN)),
-
-        # mid block, left gets done on the way
-
-        # lower-left block, right
-        ("go", (0.13, 1.8, DOWN)),
-
-        # mid-up block, left again. To be sure
-        ("go", (0.13, 1.8, UP)),
-
-
-        # Lower
-
-        # lower block, upper
-        ("go", (-1.25, 1.55, RIGHT)),
-
-        # lower-left block, lower
-        ("go", (-1.51, 0.92, LEFT)),
-
-
-
-        # Left
-
-        # left-upper block, left
-        ("go", (-0.07, 3.28, UP)),
-
-        # lower-left block, left
-        ("go", (0.01, 3.01, DOWN)),
-
-        # left-upper block, lower
-        ("go", (0.69, 3.59, RIGHT)),
-
-
-        # left-upper block, upper
-        ("go", (1.24, 3.57, RIGHT)),
-
-
-
-        # Just some continuation as a failsafe
-        ("go", (2.46, 1.98, DOWN)),
-        ("go", (1.13, 2.06, RIGHT)),
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        """
-        # Narobe postavljeni koti. 0.0 je proti gor, ne proti levo.
-        # Pa še v levo se vrtijo a kaj? Wut?
-
-
-        # Middle down
-
-        # lower-left block, upper
-        ("go", (-0.72, 0.9, 0.0)),
-
-        # lower block, left
-        ("go", (-0.72, 0.9, 4.71)),
-
-        # lower block, right
-        ("go", (-0.2, -0.1, 4.71)),
-
-        # mid block, lower
-        ("go", (-0.53, -0.19, 0.0)),
-
-
-
-        # Right up
-
-        # right-mid block, right gets done on the way
-
-        # upper block, left
-        ("go", (1.42, -1.8, 1.57)),
-
-        # upper block, upper
-        ("go", (3.11, -0.57, 3.14)),
-
-        # right-mid block, left
-        ("go", (3.11, -0.57, 4.71)),
-
-        # upper block, lower
-        ("go", (2.42, -0.5, 3.14)),
-
-        # mid-up block, upper
-        ("go", (2.0, -0.4, 0.0)),
-
-
-
-        # Mid up
-
-        # mid-up block, lower
-        ("go", (1.21, 0.0, 0.0)),
-
-        # right-mid block, lower
-        ("go", (1.21, 0.0, 3.14)),
-
-        # right-mid block, upper
-        ("go", (1.9, 0.42, 3.14)),
-
-        # mid-up block, right
-        ("go", (2.73, 0.6, 4.71)),
-
-        # mid-up block, left
-        ("go", (2.73, 1.66, 4.71)),
-
-        # mid block, left gets done on the way
-
-        # lower-left block, right
-        ("go", (0.13, 1.8, 4.71)),
-
-
-        # Lower
-
-        # lower block, upper
-        ("go", (-1.25, 1.55, 3.14)),
-
-        # lower-left block, lower
-        ("go", (-1.51, 0.92, 0.0)),
-
-
-
-        # Left
-
-        # left-upper block, left
-        ("go", (-0.07, 3.28, 1.57)),
-
-        # lower-left block, left
-        ("go", (0.01, 3.01, 4.71)),
-
-        # left-upper block, lower
-        ("go", (0.69, 3.59, 3.14)),
-
-
-        # left-upper block, upper
-        ("go", (1.24, 3.57, 3.14)),
-
-
-
-        # Just some continuation as a failsafe
-        ("go", (2.46, 1.98, 4.71)),
-        ("go", (1.13, 2.06, 3.14)),
-        """
-
-
-
-
-        """
-        # Good for face detection:
-                
-        # Starting point
-        ("go", (0.0, 0.0, 0.57)),
-
-        # Down right
-        ("go", (-1.0, 0.25, 0.57)),
-        ("go", (-1.6, -0.7, 0.57)),
-        ("go", (-0.4, -0.6, 0.57)),
-        ("go", (-0.3, -1.85, 0.57)),
-
-        # Right
-        ("go", (1.0, -1.9, 0.57)),
-        ("go", (2.2, -2.0, 0.57)),
-
-        # Right up
-        ("go", (3.4, -1.3, 0.57)),
-        ("go", (2.0, -1.0, 0.57)),
-
-        # Centre up
-        ("go", (1.5, 0.0, 0.57)),
-        ("go", (1.0, 0.0, 0.57)),
-        ("go", (2.5, 1.0, 0.57)),
-
-        # Slightly left, slightly up
-        ("go", (1.5, 2.0, 0.57)),
-        ("go", (1.0,1.0, 0.57)),
-        ("go", (1.0,2.0, 0.57)),
-        ("go", (0.0, 2.0, 0.57)),
-
-        # Slightly left, slightly down
-        ("go", (-1.0, 1.0, 0.57)),
-        ("go", (-1.75, 1.0, 0.57)),
-        ("go", (-1.75, 2.0, 0.57)),
-
-        # Left down
-        ("go", (-1.5, 4.5, 0.57)),
-        ("go", (-1.0, 3.0, 0.57)),
-
-        # Left corridor
-        ("go", (0.0, 3.2, 0.57)),
-        ("go", (0.5, 2.8, 0.57)),
-        ("go", (1.0, 3.5, 0.57)),
-
-        # Left up
-        ("go", (1.5, 2.9, 0.57)),
-        ("go", (2.0,3.0, 0.57)),
-
-        # Back to slightly left, slightly up
-        ("go", (1.5, 2.0, 0.57)),
-        """
+        ("go", (2.15, 1.8, RIGHT)),
 
     ]
 
-    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=False)
+    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=True)
 
 
 
