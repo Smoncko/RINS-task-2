@@ -65,6 +65,13 @@ from gtts import gTTS
 from io import BytesIO
 import pygame
 
+import concurrent.futures
+import threading
+
+
+from rclpy.executors import SingleThreadedExecutor
+from threading import Thread
+
 
 class TaskResult(Enum):
     UNKNOWN = 0
@@ -84,10 +91,73 @@ qos_profile = amcl_pose_qos
 
 
 
+
+class ImageGatherer(Node):
+
+
+    def __init__(self, node_name='image_gatherer', namespace=''):
+        super().__init__(node_name=node_name)
+        
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+
+        # # Neded so it even acts.
+        # self.spin_client = ActionClient(self, Spin, 'spin')
+
+        # for parking
+        self.bridge = CvBridge()
+        self.rgb_image_sub = self.create_subscription(Image, "/top_camera/rgb/preview/image_raw", self.rgb_callback, qos_profile_sensor_data)
+        self.parking = False
+        self.latest_top_img = None
+
+        self.get_logger().info(f"ImageGatherer has been initialized!")
+    
+
+    def destroyNode(self):
+        self.nav_to_pose_client.destroy()
+        super().destroy_node()
+
+    def set_parking(self, truth_val):
+        self.parking = truth_val
+    
+    def get_latest_img(self):
+        return self.latest_top_img
+
+    def rgb_callback(self, data):
+        
+        # print("Here 1!")
+
+        # if self.parking:
+        if True:       
+
+            # print("Here!")
+
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+
+                self.latest_top_img = cv_image.copy()
+
+                cv2.imshow("Top image", cv_image)
+                key = cv2.waitKey(1)
+                if key==27:
+                    print("exiting")
+                    exit()
+                
+            except CvBridgeError as e:
+                print(e)
+
+
+
+
+
 class RobotCommander(Node):
 
-    def __init__(self, node_name='robot_commander', namespace=''):
+    def __init__(self, node_name='robot_commander', namespace='', ImageGatherer=None):
         super().__init__(node_name=node_name, namespace=namespace)
+
+        self.image_gatherer = ImageGatherer
+
         self.pose_frame_id = 'map'
         
         # Flags and helper variables
@@ -142,13 +212,7 @@ class RobotCommander(Node):
         self.cylinder_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_sub = self.create_subscription(Marker, "/detected_rings", self.ring_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
-        # for parking
-        self.bridge = CvBridge()
-        self.rgb_image_sub = self.create_subscription(Image, "/top_camera/rgb/preview/image_raw", self.rgb_callback, qos_profile_sensor_data)
-        self.arm_pub = self.create_publisher(String, "/arm_command", 1)
-        self.parking = False
-        self.latest_top_img = None
-
+        
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
@@ -162,8 +226,10 @@ class RobotCommander(Node):
         self.dock_action_client = ActionClient(self, Dock, 'dock')
 
 
-        # parking publisher
+        # for parking
+        self.arm_pub = self.create_publisher(String, "/arm_command", 1)
         self.parking_pub = self.create_publisher(Twist, "cmd_vel", 10)
+
 
         self.get_logger().info(f"Robot commander has been initialized!")
         
@@ -208,28 +274,6 @@ class RobotCommander(Node):
         msg.data = "garage"
         self.arm_pub.publish(msg)
 
-    def rgb_callback(self, data):
-        
-        # print("Here 1!")
-
-        # if self.parking:
-        if True:       
-
-            # print("Here!")
-
-            try:
-                cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
-
-                self.latest_top_img = cv_image.copy()
-
-                cv2.imshow("Top image", cv_image)
-                key = cv2.waitKey(1)
-                if key==27:
-                    print("exiting")
-                    exit()
-                
-            except CvBridgeError as e:
-                print(e)
 
     def face_detected_callback(self, msg):
         
@@ -308,7 +352,7 @@ class RobotCommander(Node):
             add_to_navigation.append(("park", None))
 
             self.parking_camera()
-            self.parking = True
+            self.parking(True)
 
         add_to_navigation.append(self.last_destination_goal)
 
@@ -682,6 +726,9 @@ class RobotCommander(Node):
         self.initial_pose_pub.publish(msg)
         return
 
+    def parking(self, truth_val):
+        self.image_gatherer.set_parking(truth_val)
+
 
     def get_white_pixels_treshold(self, img):
         hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -723,6 +770,9 @@ class RobotCommander(Node):
         if num_of_components == 1:
             return (0, (0, 0))
         
+
+        # To prevent problems with tiny specs of white in the image messing things up,
+        # we choose the component with the largest area
         max_area_ix = 0
         max_area = 0
 
@@ -781,16 +831,11 @@ class RobotCommander(Node):
             velocity.linear.x = 1.0
         elif direction == "backward":
             velocity.linear.x = -1.0
-        
-        elif direction == "right":
-            velocity.angular.z = 0.5
         elif direction == "left":
+            velocity.angular.z = 0.5
+        elif direction == "right":
             velocity.angular.z = -0.5
         
-        # elif direction == "left":
-        #     velocity.angular.z = 0.5
-        # elif direction == "right":
-        #     velocity.angular.z = -0.5
         
         self.parking_pub.publish(velocity)
 
@@ -805,19 +850,25 @@ class RobotCommander(Node):
 
     def park(self):
 
+        print("Here 1")
         # input("Start parking - press enter") # uniči stvari
 
-        curr_img = self.latest_top_img
+        curr_img = self.image_gatherer.get_latest_img()
+
+        print("Here 1.5")
+        print(curr_img)
 
         while curr_img is None:
             print("Waiting for image...")
             time.sleep(0.5)
-            curr_img = self.latest_top_img
+            curr_img = self.image_gatherer.get_latest_img()
         
-        curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+        curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
 
         angles = []
         areas_at_angles = []
+
+        print("Here 2")
 
         point_in_map_frame = self.get_curr_pos()
         while point_in_map_frame is None:
@@ -837,13 +888,13 @@ class RobotCommander(Node):
             while not self.isTaskComplete():
                 time.sleep(0.05)
             
-            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+            curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
             area, _ = self.get_area_and_centroid(curr_img)
 
             angles.append(fi)
             areas_at_angles.append(area)
         
-
+        print("Here 3")
 
         max_area_ix = areas_at_angles.index(max(areas_at_angles))
         chosen_fi = angles[max_area_ix]
@@ -856,10 +907,10 @@ class RobotCommander(Node):
 
 
 
-        
+        print("Here 4")
 
 
-        curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+        curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
         area, centroid = self.get_area_and_centroid(curr_img)
         
         img_middle_x = curr_img.shape[1] / 2
@@ -875,31 +926,33 @@ class RobotCommander(Node):
             else:
                 self.cmd_vel("left", milliseconds)
 
-            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+            curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
             area, centroid = self.get_area_and_centroid(curr_img)
 
 
 
+        print("Here 5")
         # img_max_y = curr_img.shape[0]
 
         # while not(np.abs(centroid[1] - img_max_y) < 5):
             
         #     self.cmd_vel("forward", 100)
             
-        #     curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+        #     curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
         #     area, centroid = self.get_area_and_centroid(curr_img) 
 
 
 
         while area > 1000:
+            print("Area: ", area)
             self.cmd_vel("forward", milliseconds)
-            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+            curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
             area, centroid = self.get_area_and_centroid(curr_img)
         
 
+        print("Here 6")
 
-
-        self.parking = False
+        self.parking(False)
         print("Parking complete!")
         
 
@@ -1011,11 +1064,46 @@ class RobotCommander(Node):
         #v.play()
 
 
+
+# def spin_node(node):
+#     rclpy.spin(node)
+
+def spin_node(node):
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    executor.spin()
+
+
 def main(args=None):
 
     rclpy.init(args=args)
 
-    rc = RobotCommander()
+    ig = ImageGatherer()
+    # rclpy.spin(ig) # this is blocking
+
+    # never_complete_future = concurrent.futures.Future() # Also blocking
+    # rclpy.spin_until_future_complete(ig, never_complete_future)
+
+    # spin_thread = threading.Thread(target=spin_node, args=(ig,))   # ValueError: generator already executing
+    # spin_thread.start()
+
+
+
+    # thread1 = Thread(target=spin_node, args=(ig,))
+    # thread1.start()
+
+    # thread1.join()
+
+    # thread2 = Thread(target=spin_node, args=(node2,))
+    # thread2.start()
+
+
+
+
+
+
+
+    rc = RobotCommander(ImageGatherer=ig)
 
     # Wait until Nav2 and Localizer are available
     rc.waitUntilNav2Active()
@@ -1031,6 +1119,16 @@ def main(args=None):
     if rc.is_docked:
         rc.undock()
     
+
+
+
+
+
+
+
+
+
+
     # The mesh in rviz is coordinates.
     # The docking station is 0,0
     # Use Publish Point to hover and see the coordinates.
@@ -1082,7 +1180,7 @@ def main(args=None):
 
     ]
 
-    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=True)
+    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=False)
 
 
 
@@ -1129,7 +1227,7 @@ def main(args=None):
         
         elif curr_type == "park":
             rc.parking_camera()
-            rc.parking = True
+            rc.parking(True)
             rc.park()
         
 
@@ -1182,6 +1280,7 @@ def main(args=None):
 
 
     rc.destroyNode()
+    ig.destroyNode()
 
     # And a simple example
 if __name__=="__main__":
