@@ -286,8 +286,10 @@ class RobotCommander(Node):
         elif h > 180 and h < 265:
             color = "blue"
 
+        string_to_say = color + " cylinder"
+
         add_to_navigation = [
-            ("say_color", color),
+            ("say_color", string_to_say),
             self.last_destination_goal
         ]
 
