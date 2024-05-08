@@ -144,9 +144,10 @@ class RobotCommander(Node):
 
         # for parking
         self.bridge = CvBridge()
-        self.rgb_image_sub = self.create_subscription(Image, "/oakd/rgb/preview/image_raw", self.rgb_callback, qos_profile_sensor_data)
+        self.rgb_image_sub = self.create_subscription(Image, "/top_camera/rgb/preview/image_raw", self.rgb_callback, qos_profile_sensor_data)
         self.arm_pub = self.create_publisher(String, "/arm_command", 1)
         self.parking = False
+        self.latest_top_img = None
 
 
         # ROS2 publishers
@@ -208,13 +209,20 @@ class RobotCommander(Node):
         self.arm_pub.publish(msg)
 
     def rgb_callback(self, data):
+        
+        # print("Here 1!")
 
-        if self.parking:
+        # if self.parking:
+        if True:       
+
+            # print("Here!")
 
             try:
                 cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
 
-                cv2.imshow("image", cv_image)
+                self.latest_top_img = cv_image.copy()
+
+                cv2.imshow("Top image", cv_image)
                 key = cv2.waitKey(1)
                 if key==27:
                     print("exiting")
@@ -283,7 +291,12 @@ class RobotCommander(Node):
 
             ring_location = np.array([msg.pose.position.x, msg.pose.position.y])
 
-            curr_pos = self.get_curr_pos()  
+            curr_pos = self.get_curr_pos()
+            while curr_pos is None:
+                print("Waiting for point...")
+                time.sleep(0.5)
+                curr_pos = self.get_curr_pos()
+
             curr_pos_location = np.array([curr_pos.point.x, curr_pos.point.y])
 
             vec_to_face_normed = ring_location - curr_pos_location
@@ -293,10 +306,9 @@ class RobotCommander(Node):
 
             add_to_navigation.append(    ("go", (ring_location[0], ring_location[1], fi))    )
             add_to_navigation.append(("park", None))
+
             self.parking_camera()
             self.parking = True
-
-            add_to_navigation.append(("park", None))
 
         add_to_navigation.append(self.last_destination_goal)
 
@@ -680,13 +692,17 @@ class RobotCommander(Node):
         saturation_treshold = 50
         sat_img = sat_img < saturation_treshold
 
-        value_treshold = 230 
+        value_treshold = 230
         val_img = val_img > value_treshold
 
 
         colour_tresholded = np.logical_and(sat_img, val_img)
         
         colour_tresholded = colour_tresholded.astype(np.uint8)*255
+
+
+        cv2.imshow("White tresholded", colour_tresholded)
+        key = cv2.waitKey(1)
 
         return colour_tresholded
 
@@ -703,11 +719,23 @@ class RobotCommander(Node):
         stats = returned_data[2]
         centroids = returned_data[3]
 
-        print("centroids")
-        print(centroids)
 
-        centroid = centroids[1]
-        area = stats[(1, cv2.CC_STAT_AREA)]
+        if num_of_components == 1:
+            return (0, (0, 0))
+        
+        max_area_ix = 0
+        max_area = 0
+
+        for i in range(1, num_of_components):
+            if(stats[(i, cv2.CC_STAT_AREA)] > max_area):
+                max_area = stats[(i, cv2.CC_STAT_AREA)]
+                max_area_ix = i
+
+        # print("centroids")
+        # print(centroids)
+
+        centroid = centroids[max_area_ix]
+        area = stats[(max_area_ix, cv2.CC_STAT_AREA)]
 
         return (area, centroid)
 
@@ -753,10 +781,16 @@ class RobotCommander(Node):
             velocity.linear.x = 1.0
         elif direction == "backward":
             velocity.linear.x = -1.0
-        elif direction == "left":
-            velocity.angular.z = 0.5
+        
         elif direction == "right":
+            velocity.angular.z = 0.5
+        elif direction == "left":
             velocity.angular.z = -0.5
+        
+        # elif direction == "left":
+        #     velocity.angular.z = 0.5
+        # elif direction == "right":
+        #     velocity.angular.z = -0.5
         
         self.parking_pub.publish(velocity)
 
@@ -771,12 +805,26 @@ class RobotCommander(Node):
 
     def park(self):
 
+        # input("Start parking - press enter") # uniči stvari
+
         curr_img = self.latest_top_img
+
+        while curr_img is None:
+            print("Waiting for image...")
+            time.sleep(0.5)
+            curr_img = self.latest_top_img
+        
+        curr_img = self.get_white_pixels_treshold(self.latest_top_img)
 
         angles = []
         areas_at_angles = []
 
         point_in_map_frame = self.get_curr_pos()
+        while point_in_map_frame is None:
+            print("Waiting for point...")
+            time.sleep(0.5)
+            point_in_map_frame = self.get_curr_pos()
+
         x = point_in_map_frame.point.x
         y = point_in_map_frame.point.y
 
@@ -788,8 +836,8 @@ class RobotCommander(Node):
 
             while not self.isTaskComplete():
                 time.sleep(0.05)
-
-            curr_img = self.latest_top_img
+            
+            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
             area, _ = self.get_area_and_centroid(curr_img)
 
             angles.append(fi)
@@ -811,19 +859,23 @@ class RobotCommander(Node):
         
 
 
-        curr_img = self.latest_top_img
+        curr_img = self.get_white_pixels_treshold(self.latest_top_img)
         area, centroid = self.get_area_and_centroid(curr_img)
         
         img_middle_x = curr_img.shape[1] / 2
 
-        milliseconds = 100
+        milliseconds = 10
+
         while not(np.abs(centroid[0] - img_middle_x) < 10):
-            if centroid[0] < img_middle_x:
+
+            print("Centroid: ", centroid)
+            print("img_middle_x: ", img_middle_x)
+            if centroid[1] < img_middle_x:
                 self.cmd_vel("right", milliseconds)
             else:
                 self.cmd_vel("left", milliseconds)
 
-            curr_img = self.latest_top_img
+            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
             area, centroid = self.get_area_and_centroid(curr_img)
 
 
@@ -834,17 +886,20 @@ class RobotCommander(Node):
             
         #     self.cmd_vel("forward", 100)
             
-        #     curr_img = self.latest_top_img
+        #     curr_img = self.get_white_pixels_treshold(self.latest_top_img)
         #     area, centroid = self.get_area_and_centroid(curr_img) 
 
 
 
         while area > 1000:
             self.cmd_vel("forward", milliseconds)
-            curr_img = self.latest_top_img
+            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
             area, centroid = self.get_area_and_centroid(curr_img)
         
 
+
+
+        self.parking = False
         print("Parking complete!")
         
 
@@ -965,6 +1020,9 @@ def main(args=None):
     # Wait until Nav2 and Localizer are available
     rc.waitUntilNav2Active()
 
+
+    rc.parking_camera()
+
     # Check if the robot is docked, only continue when a message is recieved
     while rc.is_docked is None:
         rclpy.spin_once(rc, timeout_sec=0.5)
@@ -995,6 +1053,10 @@ def main(args=None):
     RIGHT = 4.71
 
     add_to_navigation = [
+        
+        # For testing
+        ("go", (-1.06, 0.24, DOWN)),
+        ("park", None),
 
         ("go", (-0.65, 0., DOWN)),
 
@@ -1066,6 +1128,8 @@ def main(args=None):
             rc.say_color(curr_goal)
         
         elif curr_type == "park":
+            rc.parking_camera()
+            rc.parking = True
             rc.park()
         
 
