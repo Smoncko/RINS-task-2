@@ -134,7 +134,8 @@ class RobotCommander(Node):
         
 
         self.face_sub = self.create_subscription(Marker, "/detected_faces", self.face_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
-        self.face_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        self.cylinder_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        self.ring_sub = self.create_subscription(Marker, "/detected_rings", self.ring_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
 
         # ROS2 publishers
@@ -209,6 +210,59 @@ class RobotCommander(Node):
 
         self.cancel_goal = True
         # self.cancelTask()
+
+    def ring_detected_callback(self, msg):
+        self.info("Ring detected!")
+
+        r = int(msg.color.r * 255)
+        g = int(msg.color.g * 255)
+        b = int(msg.color.b * 255)
+
+        h, s, v = self.rgb2hsv(r, g, b)
+
+        color = ""
+        if(v < 0.1):
+            color = "black"
+        elif h < 15 or h > 350:
+            color = "red"
+        elif h > 20 and h < 65:
+            color = "yellow"
+        elif h > 65 and h < 150:
+            color = "green"
+        elif h > 180 and h < 265:
+            color = "blue"
+
+        string_to_say = color + " ring."
+
+        add_to_navigation = [
+            ("say_color", string_to_say),
+        ]
+
+
+        if color == "green":
+
+            ring_location = np.array([msg.pose.position.x, msg.pose.position.y])
+
+            curr_pos = self.get_curr_pos()  
+            curr_pos_location = np.array([curr_pos.point.x, curr_pos.point.y])
+
+            vec_to_face_normed = ring_location - curr_pos_location
+            vec_to_face_normed /= np.linalg.norm(vec_to_face_normed)
+
+            fi = np.arctan2(vec_to_face_normed[1], vec_to_face_normed[0])
+
+            add_to_navigation.append(    ("go", (ring_location[0], ring_location[1], fi))    )
+
+            # add_to_navigation.append(("park", None    ))
+
+        add_to_navigation.append(self.last_destination_goal)
+
+
+        self.prepend_to_nav_list(add_to_navigation, spin_full_after_go=False)
+
+        self.cancel_goal = True
+        # self.cancelTask()
+
 
     def cylinder_detected_callback(self, msg):
         
@@ -687,7 +741,234 @@ def main(args=None):
     # ("go", <PoseStamped object>), ("spin", angle_to_spin_by), ("say_hi", None)
     
 
+    # UP = 0.0
+    # RIGHT = 1.57
+    # DOWN = 3.14
+    # LEFT = 4.71
+
+    UP = 0.0
+    LEFT = 1.57
+    DOWN = 3.14
+    RIGHT = 4.71
+
     add_to_navigation = [
+
+
+
+
+
+
+
+        # Middle down
+
+        # lower-left block, upper
+        ("go", (-0.72, 0.9, LEFT)),
+
+        # lower block, left
+        ("go", (-0.72, 0.9, DOWN)),
+
+        # lower block, right
+        ("go", (-0.2, -0.1, DOWN)),
+
+        # mid block, lower
+        ("go", (-0.53, -0.19, LEFT)),
+
+
+
+        # Right up
+
+        # right-mid block, right gets done on the way
+
+        # upper block, left
+        ("go", (1.42, -1.8, UP)),
+
+        # upper block, upper
+        ("go", (3.11, -0.57, RIGHT)),
+
+        # UP-mid block, left
+        ("go", (3.11, -0.57, DOWN)),
+
+        # upper block, lower
+        ("go", (2.42, -0.5, RIGHT)),
+
+        # mid-up block, upper
+        ("go", (2.0, -0.4, LEFT)),
+
+
+
+        # Mid up
+
+        # mid-up block, lower
+        ("go", (1.21, 0.0, LEFT)),
+
+        # right-mid block, lower
+        ("go", (1.21, 0.0, RIGHT)),
+
+        # right-mid block, upper
+        ("go", (1.9, 0.42, RIGHT)),
+
+        # mid-up block, right
+        ("go", (2.73, 0.6, DOWN)),
+
+        # mid-up block, left
+        ("go", (2.73, 1.66, DOWN)),
+
+        # mid block, left gets done on the way
+
+        # lower-left block, right
+        ("go", (0.13, 1.8, DOWN)),
+
+        # mid-up block, left again. To be sure
+        ("go", (0.13, 1.8, UP)),
+
+
+        # Lower
+
+        # lower block, upper
+        ("go", (-1.25, 1.55, RIGHT)),
+
+        # lower-left block, lower
+        ("go", (-1.51, 0.92, LEFT)),
+
+
+
+        # Left
+
+        # left-upper block, left
+        ("go", (-0.07, 3.28, UP)),
+
+        # lower-left block, left
+        ("go", (0.01, 3.01, DOWN)),
+
+        # left-upper block, lower
+        ("go", (0.69, 3.59, RIGHT)),
+
+
+        # left-upper block, upper
+        ("go", (1.24, 3.57, RIGHT)),
+
+
+
+        # Just some continuation as a failsafe
+        ("go", (2.46, 1.98, DOWN)),
+        ("go", (1.13, 2.06, RIGHT)),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        """
+        # Narobe postavljeni koti. 0.0 je proti gor, ne proti levo.
+        # Pa še v levo se vrtijo a kaj? Wut?
+
+
+        # Middle down
+
+        # lower-left block, upper
+        ("go", (-0.72, 0.9, 0.0)),
+
+        # lower block, left
+        ("go", (-0.72, 0.9, 4.71)),
+
+        # lower block, right
+        ("go", (-0.2, -0.1, 4.71)),
+
+        # mid block, lower
+        ("go", (-0.53, -0.19, 0.0)),
+
+
+
+        # Right up
+
+        # right-mid block, right gets done on the way
+
+        # upper block, left
+        ("go", (1.42, -1.8, 1.57)),
+
+        # upper block, upper
+        ("go", (3.11, -0.57, 3.14)),
+
+        # right-mid block, left
+        ("go", (3.11, -0.57, 4.71)),
+
+        # upper block, lower
+        ("go", (2.42, -0.5, 3.14)),
+
+        # mid-up block, upper
+        ("go", (2.0, -0.4, 0.0)),
+
+
+
+        # Mid up
+
+        # mid-up block, lower
+        ("go", (1.21, 0.0, 0.0)),
+
+        # right-mid block, lower
+        ("go", (1.21, 0.0, 3.14)),
+
+        # right-mid block, upper
+        ("go", (1.9, 0.42, 3.14)),
+
+        # mid-up block, right
+        ("go", (2.73, 0.6, 4.71)),
+
+        # mid-up block, left
+        ("go", (2.73, 1.66, 4.71)),
+
+        # mid block, left gets done on the way
+
+        # lower-left block, right
+        ("go", (0.13, 1.8, 4.71)),
+
+
+        # Lower
+
+        # lower block, upper
+        ("go", (-1.25, 1.55, 3.14)),
+
+        # lower-left block, lower
+        ("go", (-1.51, 0.92, 0.0)),
+
+
+
+        # Left
+
+        # left-upper block, left
+        ("go", (-0.07, 3.28, 1.57)),
+
+        # lower-left block, left
+        ("go", (0.01, 3.01, 4.71)),
+
+        # left-upper block, lower
+        ("go", (0.69, 3.59, 3.14)),
+
+
+        # left-upper block, upper
+        ("go", (1.24, 3.57, 3.14)),
+
+
+
+        # Just some continuation as a failsafe
+        ("go", (2.46, 1.98, 4.71)),
+        ("go", (1.13, 2.06, 3.14)),
+        """
+
+
+
+
+        """
+        # Good for face detection:
                 
         # Starting point
         ("go", (0.0, 0.0, 0.57)),
@@ -737,6 +1018,8 @@ def main(args=None):
 
         # Back to slightly left, slightly up
         ("go", (1.5, 2.0, 0.57)),
+        """
+
     ]
 
     rc.add_to_nav_list(add_to_navigation, spin_full_after_go=False)
@@ -751,7 +1034,7 @@ def main(args=None):
         print(rc.navigation_list[0][2])
         print("Goals following it:")
 
-        desired_num_of_following_goals = 7
+        desired_num_of_following_goals = 2
         for i in range(1, desired_num_of_following_goals+1):
             if i < len(rc.navigation_list):
                 print(rc.navigation_list[i][0])

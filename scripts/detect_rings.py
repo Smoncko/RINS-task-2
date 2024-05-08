@@ -105,10 +105,10 @@ class RingDetector(Node):
         # self.tf_buf = tf2_ros.Buffer()
         # self.tf_listener = tf2_ros.TransformListener(self.tf_buf)
 
-        cv2.namedWindow("Binary Image", cv2.WINDOW_NORMAL)
-        cv2.namedWindow("Detected contours", cv2.WINDOW_NORMAL)
-        cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
-        cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)
+        # cv2.namedWindow("Binary Image", cv2.WINDOW_NORMAL)
+        # cv2.namedWindow("Detected contours", cv2.WINDOW_NORMAL)
+        # cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
+        # cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)
 
 
 
@@ -696,8 +696,8 @@ class RingDetector(Node):
         thresh = thresholded_img
         gray = gray_img
 
-        cv2.imshow("Binary Image", thresh)
-        cv2.waitKey(1)
+        # cv2.imshow("Binary Image", thresh)
+        # cv2.waitKey(1)
 
         # Extract contours
         contours, hierarchy = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -1273,8 +1273,8 @@ class RingDetector(Node):
 
         image_viz = np.array(image_1, dtype= np.uint8)
 
-        cv2.imshow("Depth window", image_viz)
-        cv2.waitKey(1)
+        # cv2.imshow("Depth window", image_viz)
+        # cv2.waitKey(1)
 
 
 def main():
