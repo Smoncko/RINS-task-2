@@ -45,6 +45,7 @@ from rclpy.qos import qos_profile_sensor_data
 
 
 from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Twist
 from visualization_msgs.msg import Marker
 
 import tf_transformations
@@ -142,12 +143,16 @@ class RobotCommander(Node):
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
                                                       'initialpose',
                                                       10)
-        
+
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.spin_client = ActionClient(self, Spin, 'spin')
         self.undock_action_client = ActionClient(self, Undock, 'undock')
         self.dock_action_client = ActionClient(self, Dock, 'dock')
+
+
+        # parking publisher
+        self.parking_pub = self.create_publisher(Twist, "cmd_vel", 10)
 
         self.get_logger().info(f"Robot commander has been initialized!")
         
@@ -253,7 +258,7 @@ class RobotCommander(Node):
 
             add_to_navigation.append(    ("go", (ring_location[0], ring_location[1], fi))    )
 
-            # add_to_navigation.append(("park", None    ))
+            add_to_navigation.append(("park", None))
 
         add_to_navigation.append(self.last_destination_goal)
 
@@ -627,6 +632,200 @@ class RobotCommander(Node):
         self.initial_pose_pub.publish(msg)
         return
 
+
+    def get_white_pixels_treshold(self, img):
+        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        sat_img = hsv_img[:,:,1]
+        val_img = hsv_img[:,:,2]
+
+        saturation_treshold = 50
+        sat_img = sat_img < saturation_treshold
+
+        value_treshold = 230 
+        val_img = val_img > value_treshold
+
+
+        colour_tresholded = np.logical_and(sat_img, val_img)
+        
+        colour_tresholded = colour_tresholded.astype(np.uint8)*255
+
+        return colour_tresholded
+
+
+
+    def get_area_and_centroid(self, img):
+
+
+
+        img = img.copy().astype('uint8')
+        returned_data = cv2.connectedComponentsWithStats(img)
+        num_of_components = returned_data[0]
+        labels = returned_data[1]
+        stats = returned_data[2]
+        centroids = returned_data[3]
+
+        print("centroids")
+        print(centroids)
+
+        centroid = centroids[1]
+        area = stats[(1, cv2.CC_STAT_AREA)]
+
+        return (area, centroid)
+
+
+        """
+        for i in range (1, num_of_components):
+
+            
+            if(stats[(i, cv2.CC_STAT_AREA)] > 700):
+                ix_left = stats[(i, cv2.CC_STAT_LEFT)]
+                ix_right = stats[(i, cv2.CC_STAT_LEFT)] + stats[(i, cv2.CC_STAT_WIDTH)]
+                ix_top = stats[(i, cv2.CC_STAT_TOP)]
+                ix_bottom = stats[(i, cv2.CC_STAT_TOP)] + stats[(i, cv2.CC_STAT_HEIGHT)]
+                
+                # tole pa ne dela for some reason:
+                # img[ix_top:ix_bottom][ix_left:ix_right] = 0
+                img[ix_top:ix_bottom, ix_left:ix_right] = 0
+        """
+
+        """
+        stats so oblike (label, COLUMN)
+        Column vrednosti so:
+        CC_STAT_LEFT Python: cv.CC_STAT_LEFT
+        The leftmost (x) coordinate which is the inclusive start of the bounding box in the horizontal direction.
+        CC_STAT_TOP Python: cv.CC_STAT_TOP
+        CC_STAT_WIDTH 
+        Python: cv.CC_STAT_WIDTH
+        The horizontal size of the bounding box.
+        CC_STAT_HEIGHT 
+        Python: cv.CC_STAT_HEIGHT
+        The vertical size of the bounding box.
+        CC_STAT_AREA The total area (in pixels)
+        """
+
+
+    def cmd_vel(self, direction, miliseconds):
+        # Directions: "forward", "right", "left", "backward"
+        # miliseconds: how long to move
+
+        velocity = Twist()
+
+        if direction == "forward":
+            velocity.linear.x = 1.0
+        elif direction == "backward":
+            velocity.linear.x = -1.0
+        elif direction == "left":
+            velocity.angular.z = 0.5
+        elif direction == "right":
+            velocity.angular.z = -0.5
+        
+        self.parking_pub.publish(velocity)
+
+
+        # I think the velocity persists if you don't reset it.
+
+        duration = miliseconds/1000 # to get seconds
+        time.sleep(duration)
+
+        velocity = Twist()
+        self.parking_pub.publish(velocity)
+
+    def park(self):
+
+        curr_img = self.latest_top_img
+
+        angles = []
+        areas_at_angles = []
+
+        point_in_map_frame = self.get_curr_pos()
+        x = point_in_map_frame.point.x
+        y = point_in_map_frame.point.y
+
+        num_of_angles = 8
+        for i in range(num_of_angles):
+            fi = i * 2*3.14 / num_of_angles
+            pose = self.get_pose_obj(x, y, fi)
+            self.goToPose(pose)
+
+            while not self.isTaskComplete():
+                time.sleep(0.05)
+
+            curr_img = self.latest_top_img
+            area, _ = self.get_area_and_centroid(curr_img)
+
+            angles.append(fi)
+            areas_at_angles.append(area)
+        
+
+
+        max_area_ix = areas_at_angles.index(max(areas_at_angles))
+        chosen_fi = angles[max_area_ix]
+
+        pose = self.get_pose_obj(x, y, chosen_fi)
+        self.goToPose(pose)
+
+        while not self.isTaskComplete():
+            time.sleep(0.05)
+
+
+
+        
+
+
+        curr_img = self.latest_top_img
+        area, centroid = self.get_area_and_centroid(curr_img)
+        
+        img_middle_x = curr_img.shape[1] / 2
+
+        milliseconds = 100
+        while not(np.abs(centroid[0] - img_middle_x) < 10):
+            if centroid[0] < img_middle_x:
+                self.cmd_vel("right", milliseconds)
+            else:
+                self.cmd_vel("left", milliseconds)
+
+            curr_img = self.latest_top_img
+            area, centroid = self.get_area_and_centroid(curr_img)
+
+
+
+        # img_max_y = curr_img.shape[0]
+
+        # while not(np.abs(centroid[1] - img_max_y) < 5):
+            
+        #     self.cmd_vel("forward", 100)
+            
+        #     curr_img = self.latest_top_img
+        #     area, centroid = self.get_area_and_centroid(curr_img) 
+
+
+
+        while area > 1000:
+            self.cmd_vel("forward", milliseconds)
+            curr_img = self.latest_top_img
+            area, centroid = self.get_area_and_centroid(curr_img)
+        
+
+        print("Parking complete!")
+        
+
+
+
+        
+
+
+
+
+
+        
+        
+
+
+
+
+
+
     def info(self, msg):
         self.get_logger().info(msg)
         return
@@ -670,6 +869,8 @@ class RobotCommander(Node):
                 self.navigation_list.append(("say_hi", None, None))
             elif tup[0] == "say_color":
                 self.navigation_list.append(("say_color", tup[1], None))
+            elif tup[0] == "park":
+                self.navigation_list.append(("park", None, None))
 
 
     def prepend_to_nav_list(self, to_add_list, spin_full_after_go=False):
@@ -685,6 +886,8 @@ class RobotCommander(Node):
                 self.navigation_list.insert(0, ("say_hi", None, None))
             elif tup[0] == "say_color":
                 self.navigation_list.insert(0, ("say_color", tup[1], None))
+            elif tup[0] == "park":
+                self.navigation_list.insert(0, ("park", None, None))
 
     def say_hi(self):
         playsound("src/RINS-task-2/voice/zivjo.mp3")
@@ -823,6 +1026,9 @@ def main(args=None):
         
         elif curr_type == "say_color":
             rc.say_color(curr_goal)
+        
+        elif curr_type == "park":
+            rc.park()
         
 
         del rc.navigation_list[0]
