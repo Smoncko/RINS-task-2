@@ -148,6 +148,7 @@ class RobotCommander(Node):
         self.arm_pub = self.create_publisher(String, "/arm_command", 1)
         self.parking = False
         self.latest_top_img = None
+        self.img_changed = False
 
 
         # ROS2 publishers
@@ -221,6 +222,7 @@ class RobotCommander(Node):
                 cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
 
                 self.latest_top_img = cv_image.copy()
+                self.img_changed = True
 
                 cv2.imshow("Top image", cv_image)
                 key = cv2.waitKey(1)
@@ -294,7 +296,7 @@ class RobotCommander(Node):
             curr_pos = self.get_curr_pos()
             while curr_pos is None:
                 print("Waiting for point...")
-                time.sleep(0.5)
+                time.sleep(0)
                 curr_pos = self.get_curr_pos()
 
             curr_pos_location = np.array([curr_pos.point.x, curr_pos.point.y])
@@ -683,6 +685,15 @@ class RobotCommander(Node):
         return
 
 
+    def get_latest_img(self):
+        
+        while not self.img_changed:
+            print("Waiting for new image...")
+            time.sleep(0)
+        
+        self.img_changed = False
+        return self.latest_top_img.copy()
+
     def get_white_pixels_treshold(self, img):
         hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
@@ -798,7 +809,11 @@ class RobotCommander(Node):
         # I think the velocity persists if you don't reset it.
 
         duration = miliseconds/1000 # to get seconds
-        time.sleep(duration)
+        # time.sleep(duration)
+
+        start_time = time.time()
+        while time.time() - start_time < duration:
+            time.sleep(0)
 
         velocity = Twist()
         self.parking_pub.publish(velocity)
@@ -807,14 +822,14 @@ class RobotCommander(Node):
 
         # input("Start parking - press enter") # uniči stvari
 
-        curr_img = self.latest_top_img
+        curr_img = self.get_latest_img()
 
         while curr_img is None:
             print("Waiting for image...")
-            time.sleep(0.5)
-            curr_img = self.latest_top_img
+            time.sleep(0)
+            curr_img = self.get_latest_img()
         
-        curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+        curr_img = self.get_white_pixels_treshold(self.get_latest_img())
 
         angles = []
         areas_at_angles = []
@@ -822,7 +837,7 @@ class RobotCommander(Node):
         point_in_map_frame = self.get_curr_pos()
         while point_in_map_frame is None:
             print("Waiting for point...")
-            time.sleep(0.5)
+            time.sleep(0)
             point_in_map_frame = self.get_curr_pos()
 
         x = point_in_map_frame.point.x
@@ -835,9 +850,9 @@ class RobotCommander(Node):
             self.goToPose(pose)
 
             while not self.isTaskComplete():
-                time.sleep(0.05)
+                time.sleep(0)
             
-            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+            curr_img = self.get_white_pixels_treshold(self.get_latest_img())
             area, _ = self.get_area_and_centroid(curr_img)
 
             angles.append(fi)
@@ -852,14 +867,14 @@ class RobotCommander(Node):
         self.goToPose(pose)
 
         while not self.isTaskComplete():
-            time.sleep(0.05)
+            time.sleep(0)
 
 
 
         
 
 
-        curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+        curr_img = self.get_white_pixels_treshold(self.get_latest_img())
         area, centroid = self.get_area_and_centroid(curr_img)
         
         img_middle_x = curr_img.shape[1] / 2
@@ -875,7 +890,7 @@ class RobotCommander(Node):
             else:
                 self.cmd_vel("left", milliseconds)
 
-            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+            curr_img = self.get_white_pixels_treshold(self.get_latest_img())
             area, centroid = self.get_area_and_centroid(curr_img)
 
 
@@ -886,14 +901,14 @@ class RobotCommander(Node):
             
         #     self.cmd_vel("forward", 100)
             
-        #     curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+        #     curr_img = self.get_white_pixels_treshold(self.get_latest_img())
         #     area, centroid = self.get_area_and_centroid(curr_img) 
 
 
 
         while area > 1000:
             self.cmd_vel("forward", milliseconds)
-            curr_img = self.get_white_pixels_treshold(self.latest_top_img)
+            curr_img = self.get_white_pixels_treshold(self.get_latest_img())
             area, centroid = self.get_area_and_centroid(curr_img)
         
 
@@ -1082,7 +1097,7 @@ def main(args=None):
 
     ]
 
-    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=True)
+    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=False)
 
 
 
