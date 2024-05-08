@@ -48,8 +48,12 @@ from geometry_msgs.msg import PointStamped
 from geometry_msgs.msg import Twist
 from visualization_msgs.msg import Marker
 
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
+
 import tf_transformations
 
+from cv_bridge import CvBridge, CvBridgeError
 import cv2
 import numpy as np
 
@@ -138,6 +142,12 @@ class RobotCommander(Node):
         self.cylinder_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_sub = self.create_subscription(Marker, "/detected_rings", self.ring_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
+        # for parking
+        self.bridge = CvBridge()
+        self.rgb_image_sub = self.create_subscription(Image, "/oakd/rgb/preview/image_raw", self.rgb_callback, qos_profile_sensor_data)
+        self.arm_pub = self.create_publisher(String, "/arm_command", 1)
+        self.parking = False
+
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
@@ -187,6 +197,31 @@ class RobotCommander(Node):
         # Apply rotation
         return x, y
     
+    def parking_camera(self):
+        msg = String()
+        msg.data = "look_for_parking"
+        self.arm_pub.publish(msg)
+    
+    def normal_camera(self):
+        msg = String()
+        msg.data = "garage"
+        self.arm_pub.publish(msg)
+
+    def rgb_callback(self, data):
+
+        if self.parking:
+
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+
+                cv2.imshow("image", cv_image)
+                key = cv2.waitKey(1)
+                if key==27:
+                    print("exiting")
+                    exit()
+                
+            except CvBridgeError as e:
+                print(e)
 
     def face_detected_callback(self, msg):
         
@@ -257,6 +292,9 @@ class RobotCommander(Node):
             fi = np.arctan2(vec_to_face_normed[1], vec_to_face_normed[0])
 
             add_to_navigation.append(    ("go", (ring_location[0], ring_location[1], fi))    )
+            add_to_navigation.append(("park", None))
+            self.parking_camera()
+            self.parking = True
 
             add_to_navigation.append(("park", None))
 
