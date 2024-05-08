@@ -249,9 +249,11 @@ class RobotCommander(Node):
             vec_to_face_normed = ring_location - curr_pos_location
             vec_to_face_normed /= np.linalg.norm(vec_to_face_normed)
 
+            ring_location = ring_location - self.hello_dist * vec_to_face_normed
+
             fi = np.arctan2(vec_to_face_normed[1], vec_to_face_normed[0])
 
-            add_to_navigation.append(    ("go", (ring_location[0], ring_location[1], fi))    )
+            add_to_navigation.append(("go", (ring_location[0], ring_location[1], fi)))
 
             # add_to_navigation.append(("park", None    ))
 
