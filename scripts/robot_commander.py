@@ -65,12 +65,6 @@ from gtts import gTTS
 from io import BytesIO
 import pygame
 
-import concurrent.futures
-import threading
-
-
-from rclpy.executors import SingleThreadedExecutor
-from threading import Thread
 
 
 class TaskResult(Enum):
@@ -92,71 +86,13 @@ qos_profile = amcl_pose_qos
 
 
 
-class ImageGatherer(Node):
-
-
-    def __init__(self, node_name='image_gatherer', namespace=''):
-        super().__init__(node_name=node_name)
-        
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-
-
-        # # Neded so it even acts.
-        # self.spin_client = ActionClient(self, Spin, 'spin')
-
-        # for parking
-        self.bridge = CvBridge()
-        self.rgb_image_sub = self.create_subscription(Image, "/top_camera/rgb/preview/image_raw", self.rgb_callback, qos_profile_sensor_data)
-        self.parking = False
-        self.latest_top_img = None
-
-        self.get_logger().info(f"ImageGatherer has been initialized!")
-    
-
-    def destroyNode(self):
-        self.nav_to_pose_client.destroy()
-        super().destroy_node()
-
-    def set_parking(self, truth_val):
-        self.parking = truth_val
-    
-    def get_latest_img(self):
-        return self.latest_top_img
-
-    def rgb_callback(self, data):
-        
-        # print("Here 1!")
-
-        # if self.parking:
-        if True:       
-
-            # print("Here!")
-
-            try:
-                cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
-
-                self.latest_top_img = cv_image.copy()
-
-                cv2.imshow("Top image", cv_image)
-                key = cv2.waitKey(1)
-                if key==27:
-                    print("exiting")
-                    exit()
-                
-            except CvBridgeError as e:
-                print(e)
-
-
-
 
 
 class RobotCommander(Node):
 
-    def __init__(self, node_name='robot_commander', namespace='', ImageGatherer=None):
+    def __init__(self, node_name='robot_commander', namespace=''):
         super().__init__(node_name=node_name, namespace=namespace)
 
-        self.image_gatherer = ImageGatherer
 
         self.pose_frame_id = 'map'
         
@@ -211,6 +147,12 @@ class RobotCommander(Node):
         self.face_sub = self.create_subscription(Marker, "/detected_faces", self.face_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.cylinder_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_sub = self.create_subscription(Marker, "/detected_rings", self.ring_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        
+        # Here we abuse the Twist message because we don't want to go making our own one.
+        self.top_img_stats_sub = self.create_subscription(Twist, "/top_img_stats", self.top_img_stats_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        self.latest_top_img_stats = (None, None, None) # (centroid, area, shape)
+        self.top_img_changed = False
+
 
         
 
@@ -227,8 +169,8 @@ class RobotCommander(Node):
 
 
         # for parking
-        self.arm_pub = self.create_publisher(String, "/arm_command", 1)
-        self.parking_pub = self.create_publisher(Twist, "cmd_vel", 10)
+        self.arm_pub = self.create_publisher(String, "/arm_command", QoSReliabilityPolicy.BEST_EFFORT)
+        self.parking_pub = self.create_publisher(Twist, "cmd_vel", QoSReliabilityPolicy.BEST_EFFORT)
 
 
         self.get_logger().info(f"Robot commander has been initialized!")
@@ -338,7 +280,7 @@ class RobotCommander(Node):
             curr_pos = self.get_curr_pos()
             while curr_pos is None:
                 print("Waiting for point...")
-                time.sleep(0.5)
+                time.sleep(0)
                 curr_pos = self.get_curr_pos()
 
             curr_pos_location = np.array([curr_pos.point.x, curr_pos.point.y])
@@ -352,8 +294,7 @@ class RobotCommander(Node):
             add_to_navigation.append(("park", None))
 
             self.parking_camera()
-            self.parking(True)
-
+            
         add_to_navigation.append(self.last_destination_goal)
 
 
@@ -396,6 +337,42 @@ class RobotCommander(Node):
 
         self.cancel_goal = True
         # self.cancelTask()
+
+
+    def top_img_stats_callback(self, msg):
+
+        # We decided to abuse the twist message so we don't have to make our own one.
+
+        # The ordering is the same that we get from get_area_and_centroid() and img.shape in image_gatherer.py
+        # Names msg.linear.x don't necessarily mean the x coodrinate. It is simply the first of the two components.
+
+        centroid = (msg.linear.x, msg.linear.y)
+        area = msg.linear.z
+        shape = (int(msg.angular.x), int(msg.angular.y))
+
+        self.latest_top_img_stats = (centroid, area, shape)
+        self.top_img_changed = True
+    
+    
+    def get_latest_top_img_stats(self):
+        top_img_has_changed = self.top_img_changed
+        self.top_img_changed = False
+        return self.latest_top_img_stats[0], self.latest_top_img_stats[1], self.latest_top_img_stats[2], top_img_has_changed
+    
+
+    def get_top_img_stats_with_waiting_for_change(self):
+
+        centroid, area, shape, top_img_has_changed = self.get_latest_top_img_stats()
+
+        is_none_present = area is None or centroid is None or shape is None
+
+        while is_none_present or not top_img_has_changed:
+            print("Waiting for new image stats...")
+            time.sleep(0)
+            centroid, area, shape, top_img_has_changed = self.get_latest_centroid_and_area()
+        
+        return centroid, area, shape
+    
 
     def rgb2hsv(self, r, g, b):
 
@@ -726,99 +703,7 @@ class RobotCommander(Node):
         self.initial_pose_pub.publish(msg)
         return
 
-    def parking(self, truth_val):
-        self.image_gatherer.set_parking(truth_val)
 
-
-    def get_white_pixels_treshold(self, img):
-        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-        sat_img = hsv_img[:,:,1]
-        val_img = hsv_img[:,:,2]
-
-        saturation_treshold = 50
-        sat_img = sat_img < saturation_treshold
-
-        value_treshold = 230
-        val_img = val_img > value_treshold
-
-
-        colour_tresholded = np.logical_and(sat_img, val_img)
-        
-        colour_tresholded = colour_tresholded.astype(np.uint8)*255
-
-
-        cv2.imshow("White tresholded", colour_tresholded)
-        key = cv2.waitKey(1)
-
-        return colour_tresholded
-
-
-
-    def get_area_and_centroid(self, img):
-
-
-
-        img = img.copy().astype('uint8')
-        returned_data = cv2.connectedComponentsWithStats(img)
-        num_of_components = returned_data[0]
-        labels = returned_data[1]
-        stats = returned_data[2]
-        centroids = returned_data[3]
-
-
-        if num_of_components == 1:
-            return (0, (0, 0))
-        
-
-        # To prevent problems with tiny specs of white in the image messing things up,
-        # we choose the component with the largest area
-        max_area_ix = 0
-        max_area = 0
-
-        for i in range(1, num_of_components):
-            if(stats[(i, cv2.CC_STAT_AREA)] > max_area):
-                max_area = stats[(i, cv2.CC_STAT_AREA)]
-                max_area_ix = i
-
-        # print("centroids")
-        # print(centroids)
-
-        centroid = centroids[max_area_ix]
-        area = stats[(max_area_ix, cv2.CC_STAT_AREA)]
-
-        return (area, centroid)
-
-
-        """
-        for i in range (1, num_of_components):
-
-            
-            if(stats[(i, cv2.CC_STAT_AREA)] > 700):
-                ix_left = stats[(i, cv2.CC_STAT_LEFT)]
-                ix_right = stats[(i, cv2.CC_STAT_LEFT)] + stats[(i, cv2.CC_STAT_WIDTH)]
-                ix_top = stats[(i, cv2.CC_STAT_TOP)]
-                ix_bottom = stats[(i, cv2.CC_STAT_TOP)] + stats[(i, cv2.CC_STAT_HEIGHT)]
-                
-                # tole pa ne dela for some reason:
-                # img[ix_top:ix_bottom][ix_left:ix_right] = 0
-                img[ix_top:ix_bottom, ix_left:ix_right] = 0
-        """
-
-        """
-        stats so oblike (label, COLUMN)
-        Column vrednosti so:
-        CC_STAT_LEFT Python: cv.CC_STAT_LEFT
-        The leftmost (x) coordinate which is the inclusive start of the bounding box in the horizontal direction.
-        CC_STAT_TOP Python: cv.CC_STAT_TOP
-        CC_STAT_WIDTH 
-        Python: cv.CC_STAT_WIDTH
-        The horizontal size of the bounding box.
-        CC_STAT_HEIGHT 
-        Python: cv.CC_STAT_HEIGHT
-        The vertical size of the bounding box.
-        CC_STAT_AREA The total area (in pixels)
-        """
 
 
     def cmd_vel(self, direction, miliseconds):
@@ -843,7 +728,10 @@ class RobotCommander(Node):
         # I think the velocity persists if you don't reset it.
 
         duration = miliseconds/1000 # to get seconds
-        time.sleep(duration)
+
+        start_time = time.time()
+        while (time.time() - start_time) < duration:
+            time.sleep(0)
 
         velocity = Twist()
         self.parking_pub.publish(velocity)
@@ -851,19 +739,8 @@ class RobotCommander(Node):
     def park(self):
 
         print("Here 1")
-        # input("Start parking - press enter") # uniči stvari
-
-        curr_img = self.image_gatherer.get_latest_img()
-
-        print("Here 1.5")
-        print(curr_img)
-
-        while curr_img is None:
-            print("Waiting for image...")
-            time.sleep(0.5)
-            curr_img = self.image_gatherer.get_latest_img()
         
-        curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
+        centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
 
         angles = []
         areas_at_angles = []
@@ -873,7 +750,7 @@ class RobotCommander(Node):
         point_in_map_frame = self.get_curr_pos()
         while point_in_map_frame is None:
             print("Waiting for point...")
-            time.sleep(0.5)
+            time.sleep(0)
             point_in_map_frame = self.get_curr_pos()
 
         x = point_in_map_frame.point.x
@@ -886,11 +763,10 @@ class RobotCommander(Node):
             self.goToPose(pose)
 
             while not self.isTaskComplete():
-                time.sleep(0.05)
+                time.sleep(0)
             
-            curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
-            area, _ = self.get_area_and_centroid(curr_img)
-
+            centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
+            
             angles.append(fi)
             areas_at_angles.append(area)
         
@@ -903,17 +779,16 @@ class RobotCommander(Node):
         self.goToPose(pose)
 
         while not self.isTaskComplete():
-            time.sleep(0.05)
+            time.sleep(0)
 
 
 
         print("Here 4")
 
 
-        curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
-        area, centroid = self.get_area_and_centroid(curr_img)
+        centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
         
-        img_middle_x = curr_img.shape[1] / 2
+        img_middle_x = shape[1] / 2
 
         milliseconds = 10
 
@@ -926,8 +801,7 @@ class RobotCommander(Node):
             else:
                 self.cmd_vel("left", milliseconds)
 
-            curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
-            area, centroid = self.get_area_and_centroid(curr_img)
+            centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
 
 
 
@@ -939,20 +813,17 @@ class RobotCommander(Node):
         #     self.cmd_vel("forward", 100)
             
         #     curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
-        #     area, centroid = self.get_area_and_centroid(curr_img) 
+        #     centroid, area = self.get_area_and_centroid(curr_img) 
 
 
 
         while area > 1000:
             print("Area: ", area)
             self.cmd_vel("forward", milliseconds)
-            curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
-            area, centroid = self.get_area_and_centroid(curr_img)
-        
+            centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
 
         print("Here 6")
 
-        self.parking(False)
         print("Parking complete!")
         
 
@@ -1065,45 +936,13 @@ class RobotCommander(Node):
 
 
 
-# def spin_node(node):
-#     rclpy.spin(node)
-
-def spin_node(node):
-    executor = SingleThreadedExecutor()
-    executor.add_node(node)
-    executor.spin()
 
 
 def main(args=None):
 
     rclpy.init(args=args)
 
-    ig = ImageGatherer()
-    # rclpy.spin(ig) # this is blocking
-
-    # never_complete_future = concurrent.futures.Future() # Also blocking
-    # rclpy.spin_until_future_complete(ig, never_complete_future)
-
-    # spin_thread = threading.Thread(target=spin_node, args=(ig,))   # ValueError: generator already executing
-    # spin_thread.start()
-
-
-
-    # thread1 = Thread(target=spin_node, args=(ig,))
-    # thread1.start()
-
-    # thread1.join()
-
-    # thread2 = Thread(target=spin_node, args=(node2,))
-    # thread2.start()
-
-
-
-
-
-
-
-    rc = RobotCommander(ImageGatherer=ig)
+    rc = RobotCommander()
 
     # Wait until Nav2 and Localizer are available
     rc.waitUntilNav2Active()
@@ -1227,7 +1066,6 @@ def main(args=None):
         
         elif curr_type == "park":
             rc.parking_camera()
-            rc.parking(True)
             rc.park()
         
 
@@ -1280,7 +1118,6 @@ def main(args=None):
 
 
     rc.destroyNode()
-    ig.destroyNode()
 
     # And a simple example
 if __name__=="__main__":
