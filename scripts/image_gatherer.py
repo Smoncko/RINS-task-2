@@ -150,12 +150,12 @@ class ImageGatherer(Node):
         
         twist_msg = Twist()
 
-        twist_msg.linear.x = centroid[0]
-        twist_msg.linear.y = centroid[1]
-        twist_msg.linear.z = area
+        twist_msg.linear.x = float(centroid[0])
+        twist_msg.linear.y = float(centroid[1])
+        twist_msg.linear.z = float(area)
         
-        twist_msg.angular.x = img_shape[0]
-        twist_msg.angular.y = img_shape[1]
+        twist_msg.angular.x = float(img_shape[0])
+        twist_msg.angular.y = float(img_shape[1])
 
         self.stats_pub.publish(twist_msg)
 

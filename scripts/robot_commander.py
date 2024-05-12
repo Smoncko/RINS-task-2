@@ -172,6 +172,9 @@ class RobotCommander(Node):
         self.arm_pub = self.create_publisher(String, "/arm_command", QoSReliabilityPolicy.BEST_EFFORT)
         self.parking_pub = self.create_publisher(Twist, "cmd_vel", QoSReliabilityPolicy.BEST_EFFORT)
 
+        # For waiting by spinning (this allows subscriptions to call callbacks, as opposed to time.sleep(0))
+        self.waiting_spin_dir = 1 # vals 1 and -1
+
 
         self.get_logger().info(f"Robot commander has been initialized!")
         
@@ -366,10 +369,18 @@ class RobotCommander(Node):
 
         is_none_present = area is None or centroid is None or shape is None
 
+        cycle_duration = 1000    # miliseconds
+        cycle_start_time = time.time()
         while is_none_present or not top_img_has_changed:
-            print("Waiting for new image stats...")
-            time.sleep(0)
-            centroid, area, shape, top_img_has_changed = self.get_latest_centroid_and_area()
+            
+            if (time.time() - cycle_start_time) >= cycle_duration:
+                cycle_start_time = time.time()
+                print("Waiting for new image stats...")
+            
+            self.wait_by_spinning()
+            centroid, area, shape, top_img_has_changed = self.get_latest_top_img_stats()
+        
+        
         
         return centroid, area, shape
     
@@ -542,7 +553,7 @@ class RobotCommander(Node):
         return
 
 
-    def spin(self, spin_dist=1.57, time_allowance=10):
+    def spin(self, spin_dist=1.57, time_allowance=10, print_info=True):
         self.debug("Waiting for 'Spin' action server")
         while not self.spin_client.wait_for_server(timeout_sec=1.0):
             self.info("'Spin' action server not available, waiting...")
@@ -550,7 +561,8 @@ class RobotCommander(Node):
         goal_msg.target_yaw = spin_dist
         goal_msg.time_allowance = Duration(sec=time_allowance)
 
-        self.info(f'Spinning to angle {goal_msg.target_yaw}....')
+        if print_info:
+            self.info(f'Spinning to angle {goal_msg.target_yaw}....')
         send_goal_future = self.spin_client.send_goal_async(goal_msg, self._feedbackCallback)
         rclpy.spin_until_future_complete(self, send_goal_future)
         self.goal_handle = send_goal_future.result()
@@ -561,6 +573,16 @@ class RobotCommander(Node):
 
         self.result_future = self.goal_handle.get_result_async()
         return True
+
+
+    def wait_by_spinning(self, spin_dist=2*3.14 * 1e-7, spin_seconds=1):
+        # Keep spin seconds low so that we remain in almost the same place.
+        # Spin seconds has to be int.
+        spin_dir = self.waiting_spin_dir
+        self.waiting_spin_dir = -self.waiting_spin_dir
+
+        self.spin(spin_dir * spin_dist, spin_seconds, print_info=False)
+        
 
 
 
@@ -706,20 +728,20 @@ class RobotCommander(Node):
 
 
 
-    def cmd_vel(self, direction, miliseconds):
+    def cmd_vel(self, direction, miliseconds, linear_velocity=20.0):
         # Directions: "forward", "right", "left", "backward"
         # miliseconds: how long to move
 
         velocity = Twist()
 
         if direction == "forward":
-            velocity.linear.x = 1.0
+            velocity.linear.x = linear_velocity
         elif direction == "backward":
-            velocity.linear.x = -1.0
+            velocity.linear.x = -linear_velocity
         elif direction == "left":
-            velocity.angular.z = 0.5
-        elif direction == "right":
             velocity.angular.z = -0.5
+        elif direction == "right":
+            velocity.angular.z = 0.5
         
         
         self.parking_pub.publish(velocity)
@@ -785,27 +807,16 @@ class RobotCommander(Node):
 
         print("Here 4")
 
+        acceptable_errors = [5, 3]
+        acceptable_areas = [5000, 1000]
 
-        centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
-        
-        img_middle_x = shape[1] / 2
-
-        milliseconds = 10
-
-        while not(np.abs(centroid[0] - img_middle_x) < 10):
-
-            print("Centroid: ", centroid)
-            print("img_middle_x: ", img_middle_x)
-            if centroid[1] < img_middle_x:
-                self.cmd_vel("right", milliseconds)
-            else:
-                self.cmd_vel("left", milliseconds)
-
-            centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
+        for i in range(len(acceptable_errors)):
+            self.top_camera_centre_robot_to_blob_centre(acceptable_error=acceptable_errors[i], milliseconds=100, printout=True)
+            print("Here 5")
+            self.top_camera_reduce_blob_area(acceptable_area=acceptable_areas[i], milliseconds=100, printout=True)
 
 
 
-        print("Here 5")
         # img_max_y = curr_img.shape[0]
 
         # while not(np.abs(centroid[1] - img_max_y) < 5):
@@ -817,10 +828,7 @@ class RobotCommander(Node):
 
 
 
-        while area > 1000:
-            print("Area: ", area)
-            self.cmd_vel("forward", milliseconds)
-            centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
+        
 
         print("Here 6")
 
@@ -831,10 +839,38 @@ class RobotCommander(Node):
 
         
 
+    def top_camera_centre_robot_to_blob_centre(self, acceptable_error=10, milliseconds=15, printout=False):
+
+        centroid, _, shape = self.get_top_img_stats_with_waiting_for_change()        
+        
+        img_middle_x = shape[1] / 2
+
+        while not(np.abs(centroid[0] - img_middle_x) < acceptable_error):
+            
+            if(printout):
+                print("Centroid[0]: ", centroid[0])
+                print("img_middle_x: ", img_middle_x)
+                print("np.abs(centroid[0] - img_middle_x):")
+                print(np.abs(centroid[0] - img_middle_x))
+
+            if centroid[0] < img_middle_x:
+                self.cmd_vel("right", milliseconds)
+            else:
+                self.cmd_vel("left", milliseconds)
+
+            centroid, _, shape = self.get_top_img_stats_with_waiting_for_change()
 
 
+    def top_camera_reduce_blob_area(self, acceptable_area=100, milliseconds=1, printout=False):
 
+        _, area, _ = self.get_top_img_stats_with_waiting_for_change()
 
+        while area > acceptable_area:
+            if(printout):
+                print("Area: ", area)
+
+            self.cmd_vel("forward", milliseconds)
+            _, area, _ = self.get_top_img_stats_with_waiting_for_change()
         
         
 
