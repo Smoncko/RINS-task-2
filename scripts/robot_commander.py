@@ -45,10 +45,15 @@ from rclpy.qos import qos_profile_sensor_data
 
 
 from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Twist
 from visualization_msgs.msg import Marker
+
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
 
 import tf_transformations
 
+from cv_bridge import CvBridge, CvBridgeError
 import cv2
 import numpy as np
 
@@ -59,6 +64,7 @@ from pydub.playback import play
 from gtts import gTTS
 from io import BytesIO
 import pygame
+
 
 
 class TaskResult(Enum):
@@ -79,10 +85,15 @@ qos_profile = amcl_pose_qos
 
 
 
+
+
+
 class RobotCommander(Node):
 
     def __init__(self, node_name='robot_commander', namespace=''):
         super().__init__(node_name=node_name, namespace=namespace)
+
+
         self.pose_frame_id = 'map'
         
         # Flags and helper variables
@@ -96,6 +107,7 @@ class RobotCommander(Node):
 
         self.last_destination_goal = ("go", (0.0, 0.0, 0.57))
         self.hello_dist = 0.5
+        self.ring_parking_dist = 0.5
         self.navigation_list = []
 
         self.faces_greeted = 0
@@ -136,18 +148,34 @@ class RobotCommander(Node):
         self.face_sub = self.create_subscription(Marker, "/detected_faces", self.face_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.cylinder_sub = self.create_subscription(Marker, "/detected_cylinder", self.cylinder_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_sub = self.create_subscription(Marker, "/detected_rings", self.ring_detected_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        
+        # Here we abuse the Twist message because we don't want to go making our own one.
+        self.top_img_stats_sub = self.create_subscription(Twist, "/top_img_stats", self.top_img_stats_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        self.latest_top_img_stats = (None, None, None) # (centroid, area, shape)
+        self.top_img_changed = False
 
+
+        
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
                                                       'initialpose',
                                                       10)
-        
+
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.spin_client = ActionClient(self, Spin, 'spin')
         self.undock_action_client = ActionClient(self, Undock, 'undock')
         self.dock_action_client = ActionClient(self, Dock, 'dock')
+
+
+        # for parking
+        self.arm_pub = self.create_publisher(String, "/arm_command", QoSReliabilityPolicy.BEST_EFFORT)
+        self.parking_pub = self.create_publisher(Twist, "cmd_vel", QoSReliabilityPolicy.BEST_EFFORT)
+
+        # For waiting by spinning (this allows subscriptions to call callbacks, as opposed to time.sleep(0))
+        self.waiting_spin_dir = 1 # vals 1 and -1
+
 
         self.get_logger().info(f"Robot commander has been initialized!")
         
@@ -182,6 +210,16 @@ class RobotCommander(Node):
         # Apply rotation
         return x, y
     
+    def parking_camera(self):
+        msg = String()
+        msg.data = "look_for_parking"
+        self.arm_pub.publish(msg)
+    
+    def normal_camera(self):
+        msg = String()
+        msg.data = "garage"
+        self.arm_pub.publish(msg)
+
 
     def face_detected_callback(self, msg):
         
@@ -243,20 +281,26 @@ class RobotCommander(Node):
 
             ring_location = np.array([msg.pose.position.x, msg.pose.position.y])
 
-            curr_pos = self.get_curr_pos()  
+            curr_pos = self.get_curr_pos()
+            while curr_pos is None:
+                print("Waiting for point...")
+                time.sleep(0)
+                curr_pos = self.get_curr_pos()
+
             curr_pos_location = np.array([curr_pos.point.x, curr_pos.point.y])
 
             vec_to_face_normed = ring_location - curr_pos_location
             vec_to_face_normed /= np.linalg.norm(vec_to_face_normed)
 
-            ring_location = ring_location - self.hello_dist * vec_to_face_normed
+            ring_location = ring_location - self.ring_parking_dist * vec_to_face_normed
 
             fi = np.arctan2(vec_to_face_normed[1], vec_to_face_normed[0])
 
             add_to_navigation.append(("go", (ring_location[0], ring_location[1], fi)))
+            add_to_navigation.append(("park", None))
 
-            # add_to_navigation.append(("park", None    ))
-
+            self.parking_camera()
+            
         add_to_navigation.append(self.last_destination_goal)
 
 
@@ -299,6 +343,50 @@ class RobotCommander(Node):
 
         self.cancel_goal = True
         # self.cancelTask()
+
+
+    def top_img_stats_callback(self, msg):
+
+        # We decided to abuse the twist message so we don't have to make our own one.
+
+        # The ordering is the same that we get from get_area_and_centroid() and img.shape in image_gatherer.py
+        # Names msg.linear.x don't necessarily mean the x coodrinate. It is simply the first of the two components.
+
+        centroid = (msg.linear.x, msg.linear.y)
+        area = msg.linear.z
+        shape = (int(msg.angular.x), int(msg.angular.y))
+
+        self.latest_top_img_stats = (centroid, area, shape)
+        self.top_img_changed = True
+    
+    
+    def get_latest_top_img_stats(self):
+        top_img_has_changed = self.top_img_changed
+        self.top_img_changed = False
+        return self.latest_top_img_stats[0], self.latest_top_img_stats[1], self.latest_top_img_stats[2], top_img_has_changed
+    
+
+    def get_top_img_stats_with_waiting_for_change(self):
+
+        centroid, area, shape, top_img_has_changed = self.get_latest_top_img_stats()
+
+        is_none_present = area is None or centroid is None or shape is None
+
+        cycle_duration = 1000    # miliseconds
+        cycle_start_time = time.time()
+        while is_none_present or not top_img_has_changed:
+            
+            if (time.time() - cycle_start_time) >= cycle_duration:
+                cycle_start_time = time.time()
+                print("Waiting for new image stats...")
+            
+            self.wait_by_spinning()
+            centroid, area, shape, top_img_has_changed = self.get_latest_top_img_stats()
+        
+        
+        
+        return centroid, area, shape
+    
 
     def rgb2hsv(self, r, g, b):
 
@@ -468,7 +556,7 @@ class RobotCommander(Node):
         return
 
 
-    def spin(self, spin_dist=1.57, time_allowance=10):
+    def spin(self, spin_dist=1.57, time_allowance=10, print_info=True):
         self.debug("Waiting for 'Spin' action server")
         while not self.spin_client.wait_for_server(timeout_sec=1.0):
             self.info("'Spin' action server not available, waiting...")
@@ -476,7 +564,8 @@ class RobotCommander(Node):
         goal_msg.target_yaw = spin_dist
         goal_msg.time_allowance = Duration(sec=time_allowance)
 
-        self.info(f'Spinning to angle {goal_msg.target_yaw}....')
+        if print_info:
+            self.info(f'Spinning to angle {goal_msg.target_yaw}....')
         send_goal_future = self.spin_client.send_goal_async(goal_msg, self._feedbackCallback)
         rclpy.spin_until_future_complete(self, send_goal_future)
         self.goal_handle = send_goal_future.result()
@@ -487,6 +576,16 @@ class RobotCommander(Node):
 
         self.result_future = self.goal_handle.get_result_async()
         return True
+
+
+    def wait_by_spinning(self, spin_dist=2*3.14 * 1e-7, spin_seconds=1):
+        # Keep spin seconds low so that we remain in almost the same place.
+        # Spin seconds has to be int.
+        spin_dir = self.waiting_spin_dir
+        self.waiting_spin_dir = -self.waiting_spin_dir
+
+        self.spin(spin_dir * spin_dist, spin_seconds, print_info=False)
+        
 
 
 
@@ -629,6 +728,139 @@ class RobotCommander(Node):
         self.initial_pose_pub.publish(msg)
         return
 
+
+
+
+    def cmd_vel(self, direction, miliseconds, linear_velocity=20.0):
+        # Directions: "forward", "right", "left", "backward"
+        # miliseconds: how long to move
+
+        velocity = Twist()
+
+        if direction == "forward":
+            velocity.linear.x = linear_velocity
+        elif direction == "backward":
+            velocity.linear.x = -linear_velocity
+        elif direction == "left":
+            velocity.angular.z = -0.5
+        elif direction == "right":
+            velocity.angular.z = 0.5
+        
+        
+        self.parking_pub.publish(velocity)
+
+
+        # I think the velocity persists if you don't reset it.
+
+        duration = miliseconds/1000 # to get seconds
+
+        start_time = time.time()
+        while (time.time() - start_time) < duration:
+            time.sleep(0)
+
+        velocity = Twist()
+        self.parking_pub.publish(velocity)
+
+    def park(self):
+        
+        # Just here to wait until we get the first image, if that hasn't happened yet.
+        _, _, _ = self.get_top_img_stats_with_waiting_for_change()
+
+        angles = []
+        areas_at_angles = []
+
+
+        point_in_map_frame = self.get_curr_pos()
+        while point_in_map_frame is None:
+            print("Waiting for point...")
+            time.sleep(0)
+            point_in_map_frame = self.get_curr_pos()
+
+        x = point_in_map_frame.point.x
+        y = point_in_map_frame.point.y
+
+        num_of_angles = 8
+        for i in range(num_of_angles):
+            fi = i * 2*3.14 / num_of_angles
+            pose = self.get_pose_obj(x, y, fi)
+            self.goToPose(pose)
+
+            while not self.isTaskComplete():
+                time.sleep(0)
+            
+            _, area, _ = self.get_top_img_stats_with_waiting_for_change()
+            
+            angles.append(fi)
+            areas_at_angles.append(area)
+        
+
+        max_area_ix = areas_at_angles.index(max(areas_at_angles))
+        chosen_fi = angles[max_area_ix]
+
+        pose = self.get_pose_obj(x, y, chosen_fi)
+        self.goToPose(pose)
+
+        while not self.isTaskComplete():
+            time.sleep(0)
+
+
+
+        acceptable_errors = [5, 3]
+        acceptable_areas = [5000, 1000]
+
+        for i in range(len(acceptable_errors)):
+            self.top_camera_centre_robot_to_blob_centre(acceptable_error=acceptable_errors[i], milliseconds=100, printout=True)
+            self.top_camera_reduce_blob_area(acceptable_area=acceptable_areas[i], milliseconds=100, printout=True)
+
+
+
+        print("Parking complete!")
+        
+
+
+
+        
+
+    def top_camera_centre_robot_to_blob_centre(self, acceptable_error=10, milliseconds=15, printout=False):
+
+        centroid, _, shape = self.get_top_img_stats_with_waiting_for_change()        
+        
+        img_middle_x = shape[1] / 2
+
+        while not(np.abs(centroid[0] - img_middle_x) < acceptable_error):
+            
+            if(printout):
+                print("Centroid[0]: ", centroid[0])
+                print("img_middle_x: ", img_middle_x)
+                print("np.abs(centroid[0] - img_middle_x):")
+                print(np.abs(centroid[0] - img_middle_x))
+
+            if centroid[0] < img_middle_x:
+                self.cmd_vel("right", milliseconds)
+            else:
+                self.cmd_vel("left", milliseconds)
+
+            centroid, _, shape = self.get_top_img_stats_with_waiting_for_change()
+
+
+    def top_camera_reduce_blob_area(self, acceptable_area=100, milliseconds=1, printout=False):
+
+        _, area, _ = self.get_top_img_stats_with_waiting_for_change()
+
+        while area > acceptable_area:
+            if(printout):
+                print("Area: ", area)
+
+            self.cmd_vel("forward", milliseconds)
+            _, area, _ = self.get_top_img_stats_with_waiting_for_change()
+        
+        
+
+
+
+
+
+
     def info(self, msg):
         self.get_logger().info(msg)
         return
@@ -672,6 +904,8 @@ class RobotCommander(Node):
                 self.navigation_list.append(("say_hi", None, None))
             elif tup[0] == "say_color":
                 self.navigation_list.append(("say_color", tup[1], None))
+            elif tup[0] == "park":
+                self.navigation_list.append(("park", None, None))
 
 
     def prepend_to_nav_list(self, to_add_list, spin_full_after_go=False):
@@ -687,6 +921,8 @@ class RobotCommander(Node):
                 self.navigation_list.insert(0, ("say_hi", None, None))
             elif tup[0] == "say_color":
                 self.navigation_list.insert(0, ("say_color", tup[1], None))
+            elif tup[0] == "park":
+                self.navigation_list.insert(0, ("park", None, None))
 
     def say_hi(self):
         playsound("src/RINS-task-2/voice/zivjo.mp3")
@@ -717,6 +953,9 @@ class RobotCommander(Node):
         #v.play()
 
 
+
+
+
 def main(args=None):
 
     rclpy.init(args=args)
@@ -726,6 +965,9 @@ def main(args=None):
     # Wait until Nav2 and Localizer are available
     rc.waitUntilNav2Active()
 
+
+    rc.parking_camera()
+
     # Check if the robot is docked, only continue when a message is recieved
     while rc.is_docked is None:
         rclpy.spin_once(rc, timeout_sec=0.5)
@@ -734,6 +976,16 @@ def main(args=None):
     if rc.is_docked:
         rc.undock()
     
+
+
+
+
+
+
+
+
+
+
     # The mesh in rviz is coordinates.
     # The docking station is 0,0
     # Use Publish Point to hover and see the coordinates.
@@ -756,7 +1008,7 @@ def main(args=None):
     RIGHT = 4.71
 
     add_to_navigation = [
-
+        
         ("go", (-0.65, 0., DOWN)),
 
         ("go", (1.1, -2., UP)),
@@ -825,6 +1077,10 @@ def main(args=None):
         
         elif curr_type == "say_color":
             rc.say_color(curr_goal)
+        
+        elif curr_type == "park":
+            rc.parking_camera()
+            rc.park()
         
 
         del rc.navigation_list[0]
