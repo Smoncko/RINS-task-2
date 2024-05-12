@@ -107,7 +107,7 @@ class RobotCommander(Node):
 
         self.last_destination_goal = ("go", (0.0, 0.0, 0.57))
         self.hello_dist = 0.5
-        self.ring_parking_dist = 0.5
+        self.ring_parking_dist = 0.3
         self.navigation_list = []
 
         self.faces_greeted = 0
@@ -277,7 +277,8 @@ class RobotCommander(Node):
         ]
 
 
-        if color == "green":
+        # if color == "green":
+        if True:
 
             ring_location = np.array([msg.pose.position.x, msg.pose.position.y])
 

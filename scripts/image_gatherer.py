@@ -178,6 +178,27 @@ class ImageGatherer(Node):
         colour_tresholded = colour_tresholded.astype(np.uint8)*255
 
 
+
+        # This might be a better way to do it.
+        # It would still have many white spots most of the time, but when there is a white circle on the floor
+        # it would be highlighted as the foreground and there wouldn't be any other white spots.
+        # And that is the only time we actually care about the white spots, because they would clog up our search for the spot with the largest area.
+        """
+        # Do histogram equalization
+        thresholder = cv2.equalizeHist(thresholder)
+
+        # Binarize the image, there are different ways to do it
+        #ret, thresholded = cv2.threshold(thresholder, 50, 255, 0)
+        #ret, thresholded = cv2.threshold(thresholder, 70, 255, cv2.THRESH_BINARY)
+
+        ret, thresholded = cv2.threshold(thresholder, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # The background and foreground are switched in the thresholded image
+        # Switch them back - only whis way morphologcal operations do what you expect.
+        thresholded = cv2.bitwise_not(thresholded)
+        """
+
+
         cv2.imshow("White tresholded", colour_tresholded)
         key = cv2.waitKey(1)
 
