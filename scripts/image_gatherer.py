@@ -1,4 +1,8 @@
+#! /usr/bin/env python3
 
+
+
+# !/usr/bin/python3
 
 from enum import Enum
 import time
@@ -246,3 +250,27 @@ class ImageGatherer(Node):
         CC_STAT_AREA The total area (in pixels)
         """
 
+
+
+
+
+
+
+
+def main(args=None):
+
+    rclpy.init(args=args)
+
+    ig = ImageGatherer()
+
+
+    rclpy.spin(ig)
+
+    cv2.destroyAllWindows()
+
+
+    ig.destroyNode()
+
+    # And a simple example
+if __name__=="__main__":
+    main()
