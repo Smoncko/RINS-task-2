@@ -759,15 +759,13 @@ class RobotCommander(Node):
         self.parking_pub.publish(velocity)
 
     def park(self):
-
-        print("Here 1")
         
-        centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
+        # Just here to wait until we get the first image, if that hasn't happened yet.
+        _, _, _ = self.get_top_img_stats_with_waiting_for_change()
 
         angles = []
         areas_at_angles = []
 
-        print("Here 2")
 
         point_in_map_frame = self.get_curr_pos()
         while point_in_map_frame is None:
@@ -787,12 +785,11 @@ class RobotCommander(Node):
             while not self.isTaskComplete():
                 time.sleep(0)
             
-            centroid, area, shape = self.get_top_img_stats_with_waiting_for_change()
+            _, area, _ = self.get_top_img_stats_with_waiting_for_change()
             
             angles.append(fi)
             areas_at_angles.append(area)
         
-        print("Here 3")
 
         max_area_ix = areas_at_angles.index(max(areas_at_angles))
         chosen_fi = angles[max_area_ix]
@@ -805,32 +802,14 @@ class RobotCommander(Node):
 
 
 
-        print("Here 4")
-
         acceptable_errors = [5, 3]
         acceptable_areas = [5000, 1000]
 
         for i in range(len(acceptable_errors)):
             self.top_camera_centre_robot_to_blob_centre(acceptable_error=acceptable_errors[i], milliseconds=100, printout=True)
-            print("Here 5")
             self.top_camera_reduce_blob_area(acceptable_area=acceptable_areas[i], milliseconds=100, printout=True)
 
 
-
-        # img_max_y = curr_img.shape[0]
-
-        # while not(np.abs(centroid[1] - img_max_y) < 5):
-            
-        #     self.cmd_vel("forward", 100)
-            
-        #     curr_img = self.get_white_pixels_treshold(self.image_gatherer.get_latest_img())
-        #     centroid, area = self.get_area_and_centroid(curr_img) 
-
-
-
-        
-
-        print("Here 6")
 
         print("Parking complete!")
         
@@ -1027,10 +1006,6 @@ def main(args=None):
 
     add_to_navigation = [
         
-        # For testing
-        ("go", (-1.06, 0.24, DOWN)),
-        ("park", None),
-
         ("go", (-0.65, 0., DOWN)),
 
         ("go", (1.1, -2., UP)),
@@ -1055,7 +1030,7 @@ def main(args=None):
 
     ]
 
-    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=False)
+    rc.add_to_nav_list(add_to_navigation, spin_full_after_go=True)
 
 
 
